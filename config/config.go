@@ -123,36 +123,6 @@ func getDuration(key string, defaultSeconds int) time.Duration {
 	return time.Duration(defaultSeconds) * time.Second
 }
 
-// BuildAPIURL 베이스 URL과 routeId로 완전한 API URL 생성
-func (c *Config) BuildAPIURL(routeID string) string {
-	var params []string
-	
-	if c.APIType == "api2" {
-		// API2: 공공데이터포털 버스정보 API
-		params = []string{
-			"serviceKey=" + c.ServiceKey,
-			"cityCode=" + c.CityCode,
-			"routeId=" + routeID,
-			"_type=json",
-			"numOfRows=100",
-		}
-	} else {
-		// API1: 기본 경기버스정보 API
-		params = []string{
-			"serviceKey=" + c.ServiceKey,
-			"format=json",
-			"routeId=" + routeID,
-		}
-	}
-	
-	// URL에 파라미터 추가
-	baseURL := c.APIBaseURL
-	if strings.Contains(baseURL, "?") {
-		return baseURL + "&" + strings.Join(params, "&")
-	}
-	return baseURL + "?" + strings.Join(params, "&")
-}
-
 // IsOperatingTime 현재 시간이 운영 시간인지 확인
 func (c *Config) IsOperatingTime(currentTime time.Time) bool {
 	hour := currentTime.Hour()

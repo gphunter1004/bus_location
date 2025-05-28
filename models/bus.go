@@ -11,9 +11,9 @@ type API1Response struct {
 
 // API1ResponseWrapper API1 response 래퍼 구조체
 type API1ResponseWrapper struct {
-	ComMsgHeader string       `json:"comMsgHeader"`
-	MsgHeader    API1Header   `json:"msgHeader"`
-	MsgBody      API1Body     `json:"msgBody"`
+	ComMsgHeader string     `json:"comMsgHeader"`
+	MsgHeader    API1Header `json:"msgHeader"`
+	MsgBody      API1Body   `json:"msgBody"`
 }
 
 // API1Header API1 응답 헤더
@@ -61,41 +61,43 @@ type API2Items struct {
 // API2BusLocationItem API2의 실제 버스 위치 정보
 type API2BusLocationItem struct {
 	// 위치 정보
-	GpsLati   float64 `json:"gpslati"`   // 위도
-	GpsLong   float64 `json:"gpslong"`   // 경도
+	GpsLati float64 `json:"gpslati"` // 위도
+	GpsLong float64 `json:"gpslong"` // 경도
 	// 정류장 정보 (선택적 - 정류장에 있는 버스만)
-	NodeId    string  `json:"nodeid,omitempty"`    // 정류장ID (예: "GGB233000979")
-	NodeNm    string  `json:"nodenm,omitempty"`    // 정류장명 (예: "포스코더샵.롯데캐슬")
-	NodeOrd   int     `json:"nodeord"`             // 정류장순서
+	NodeId  string `json:"nodeid,omitempty"` // 정류장ID (예: "GGB233000979")
+	NodeNm  string `json:"nodenm,omitempty"` // 정류장명 (예: "포스코더샵.롯데캐슬")
+	NodeOrd int    `json:"nodeord"`          // 정류장순서
 	// 노선 정보
-	RouteNm   int     `json:"routenm"`   // 노선번호 (예: 6003)
-	RouteTp   string  `json:"routetp"`   // 노선유형 (예: "직행좌석버스")
+	RouteNm int    `json:"routenm"` // 노선번호 (예: 6003)
+	RouteTp string `json:"routetp"` // 노선유형 (예: "직행좌석버스")
 	// 차량 정보
-	VehicleNo string  `json:"vehicleno"` // 차량번호 (예: "경기76아4432")
-	Timestamp string  `json:"@timestamp,omitempty"`
+	VehicleNo string `json:"vehicleno"` // 차량번호 (예: "경기76아4432")
+	Timestamp string `json:"@timestamp,omitempty"`
 }
 
 // BusLocation 공통 버스 위치 정보 구조체
 type BusLocation struct {
-	Crowded        int    `json:"crowded"`
-	LowPlate       int    `json:"lowPlate"`
-	PlateNo        string `json:"plateNo"`
-	RemainSeatCnt  int    `json:"remainSeatCnt"`
-	RouteId        int64  `json:"routeId"`
-	RouteTypeCd    int    `json:"routeTypeCd"`
-	StateCd        int    `json:"stateCd"`
-	StationId      int64  `json:"stationId"`
-	StationSeq     int    `json:"stationSeq"`
-	TaglessCd      int    `json:"taglessCd"`
-	VehId          int64  `json:"vehId"`
-	Timestamp      string `json:"@timestamp,omitempty"`
+	Crowded       int    `json:"crowded"`
+	LowPlate      int    `json:"lowPlate"`
+	PlateNo       string `json:"plateNo"`
+	RemainSeatCnt int    `json:"remainSeatCnt"`
+	RouteId       int64  `json:"routeId"`
+	RouteTypeCd   int    `json:"routeTypeCd"`
+	StateCd       int    `json:"stateCd"`
+	StationId     int64  `json:"stationId"`
+	StationSeq    int    `json:"stationSeq"`
+	TaglessCd     int    `json:"taglessCd"`
+	VehId         int64  `json:"vehId"`
+	Timestamp     string `json:"@timestamp,omitempty"`
 	// API2 전용 필드 (정류장 정보)
-	NodeId    string  `json:"nodeId,omitempty"`
-	NodeNm    string  `json:"nodeNm,omitempty"`
-	NodeNo    int     `json:"nodeNo,omitempty"`
-	NodeOrd   int     `json:"nodeOrd,omitempty"`
-	GpsLati   float64 `json:"gpsLati,omitempty"`
-	GpsLong   float64 `json:"gpsLong,omitempty"`
+	NodeId  string  `json:"nodeId,omitempty"`
+	NodeNm  string  `json:"nodeNm,omitempty"`
+	NodeNo  int     `json:"nodeNo,omitempty"`
+	NodeOrd int     `json:"nodeOrd,omitempty"`
+	GpsLati float64 `json:"gpsLati,omitempty"`
+	GpsLong float64 `json:"gpsLong,omitempty"`
+	// 추가 필드 (전체 정류소 개수)
+	TotalStations int `json:"totalStations,omitempty"` // 해당 노선의 전체 정류소 개수
 }
 
 // BulkResponse Elasticsearch 벌크 응답 구조체
@@ -167,7 +169,7 @@ func (ar *API2Response) GetBusLocationItemList() []API2BusLocationItem {
 func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 	// RouteId를 routenm에서 가져오기 (int를 int64로 변환)
 	routeId := int64(item.RouteNm)
-	
+
 	// StationId 생성 - NodeId가 있으면 사용, 없으면 NodeOrd 기반으로 생성
 	stationId := int64(item.NodeOrd) // 기본적으로 순서 사용
 	if item.NodeId != "" && len(item.NodeId) > 3 {
@@ -176,19 +178,19 @@ func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 			stationId = nodeIdInt
 		}
 	}
-	
+
 	return BusLocation{
 		// API2 실제 데이터 매핑
-		PlateNo:       item.VehicleNo,  // 차량번호
-		RouteId:       routeId,         // 노선번호
-		StationId:     stationId,       // 정류장ID
-		StationSeq:    item.NodeOrd,    // 정류장순서
-		// API2 전용 필드 (추가 정보)
-		NodeId:        item.NodeId,     // 정류장ID (원본)
-		NodeNm:        item.NodeNm,     // 정류장명
-		NodeOrd:       item.NodeOrd,    // 정류장순서
-		GpsLati:       item.GpsLati,    // 위도
-		GpsLong:       item.GpsLong,    // 경도
+		PlateNo:    item.VehicleNo, // 차량번호
+		RouteId:    routeId,        // 노선번호
+		StationId:  stationId,      // 정류장ID
+		StationSeq: item.NodeOrd,   // 정류장순서
+		// API2 전용 필드 (API 응답에 이미 포함된 정보 사용)
+		NodeId:  item.NodeId,  // 정류장ID (API 응답에서 가져옴)
+		NodeNm:  item.NodeNm,  // 정류장명 (API 응답에서 가져옴)
+		NodeOrd: item.NodeOrd, // 정류장순서
+		GpsLati: item.GpsLati, // 위도
+		GpsLong: item.GpsLong, // 경도
 		// 기본값 설정 (API2에서 제공되지 않는 필드)
 		Crowded:       0,
 		LowPlate:      0,
@@ -197,6 +199,7 @@ func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 		StateCd:       0,
 		TaglessCd:     0,
 		VehId:         0, // 차량번호를 해시해서 생성할 수도 있음
-		NodeNo:        0,
+		NodeNo:        0, // 캐시에서 채워짐 (필요시)
+		TotalStations: 0, // 캐시에서 설정됨
 	}
 }
