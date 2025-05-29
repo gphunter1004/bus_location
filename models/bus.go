@@ -91,16 +91,16 @@ type API2BusLocationItem struct {
 
 // BusLocation 공통 버스 위치 정보 구조체
 type BusLocation struct {
-	Crowded       int    `json:"crowded"`
-	LowPlate      int    `json:"lowPlate"`
+	Crowded       int    `json:"crowded"`  // 차내혼잡도 (1:여유, 2:보통, 3:혼잡, 4:매우혼잡) 차내혼잡도 제공노선유형 (13:일반형시내버스, 15:따복형시내버스, 23:일반형농어촌버스)
+	LowPlate      int    `json:"lowPlate"` // 특수차량여부 (0: 일반버스, 1: 저상버스, 2: 2층버스, 5: 전세버스, 6: 예약버스, 7: 트롤리)
 	PlateNo       string `json:"plateNo"`
-	RemainSeatCnt int    `json:"remainSeatCnt"`
+	RemainSeatCnt int    `json:"remainSeatCnt"` // 차내빈자리수 (-1:정보없음, 0~:빈자리 수) 차내빈자리수 제공노선유형 (11: 직행좌석형시내버스, 12:좌석형시내버스, 14: 광역급행형시내버스, 16: 경기순환버스, 17: 준공영제직행좌석시내버스, 21: 직행좌석형농어촌버스, 22: 좌석형농어촌버스)
 	RouteId       int64  `json:"routeId"`
-	RouteTypeCd   int    `json:"routeTypeCd"`
-	StateCd       int    `json:"stateCd"`
+	RouteTypeCd   int    `json:"routeTypeCd"` // 노선유형코드 (11: 직행좌석형시내버스, 12:좌석형시내버스, 13:일반형시내버스, 14: 광역급행형시내버스, 15: 따복형시내버스, 16: 경기순환버스, 21: 직행좌석형농어촌버스, 22: 좌석형농어촌버스, 23:일반형농어촌버스, 30: 마을버스, 41: 고속형시외버스, 42: 좌석형시외버스, 43: 일반형시외버스, 51: 리무진공항버스, 52: 좌석형공항버스, 53: 일반형공항버스)
+	StateCd       int    `json:"stateCd"`     // 상태코드 (0:교차로통과, 1:정류소 도착, 2:정류소 출발)
 	StationId     int64  `json:"stationId"`
-	StationSeq    int    `json:"stationSeq"`
-	TaglessCd     int    `json:"taglessCd"`
+	StationSeq    int    `json:"stationSeq"` // 정류소순번
+	TaglessCd     int    `json:"taglessCd"`  // 태그리스 서비스가 제공되는 차량 여부 (0:일반차량, 1:태그리스차량)
 	VehId         int64  `json:"vehId"`
 	Timestamp     string `json:"@timestamp,omitempty"`
 	// API2 전용 필드 (정류장 정보)
