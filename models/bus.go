@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"strconv"
 )
 
@@ -45,7 +46,7 @@ type API2Header struct {
 	ResultMsg  string `json:"resultMsg"`
 }
 
-// API2Body API2 바디
+// API2Body API2 바디 (빈 응답 처리 개선)
 type API2Body struct {
 	Items      API2Items `json:"items"`
 	NumOfRows  int       `json:"numOfRows"`
@@ -53,9 +54,22 @@ type API2Body struct {
 	TotalCount int       `json:"totalCount"`
 }
 
-// API2Items API2 아이템들 - 실제 버스 위치 데이터
+// API2Items API2 아이템들 - 빈 응답 처리를 위한 커스텀 언마샬링
 type API2Items struct {
 	Item []API2BusLocationItem `json:"item"`
+}
+
+// UnmarshalJSON API2Items에 대한 커스텀 JSON 언마샬링
+func (items *API2Items) UnmarshalJSON(data []byte) error {
+	// 빈 문자열인 경우 빈 배열로 처리
+	if string(data) == `""` || string(data) == `null` {
+		items.Item = []API2BusLocationItem{}
+		return nil
+	}
+
+	// 정상적인 객체인 경우 일반 언마샬링
+	type Alias API2Items
+	return json.Unmarshal(data, (*Alias)(items))
 }
 
 // API2BusLocationItem API2의 실제 버스 위치 정보

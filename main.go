@@ -31,6 +31,8 @@ func main() {
 	logger.Infof("운영 시간: %02d:%02d ~ %02d:%02d (중단: %02d:%02d ~ %02d:%02d)",
 		cfg.OperatingStartHour, cfg.OperatingStartMinute, cfg.OperatingEndHour, cfg.OperatingEndMinute,
 		cfg.OperatingEndHour, cfg.OperatingEndMinute, cfg.OperatingStartHour, cfg.OperatingStartMinute)
+	logger.Infof("버스 정리 주기: %v", cfg.BusCleanupInterval)
+	logger.Infof("버스 미목격 제한 시간: %v", cfg.BusTimeoutDuration)
 
 	// 서비스 초기화 - 팩토리 패턴으로 API 클라이언트 생성
 	busTracker := services.NewBusTracker()
@@ -71,6 +73,10 @@ func main() {
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
 
+	// 버스 정리 타이머 생성 (환경변수 기반)
+	cleanupTicker := time.NewTicker(cfg.BusCleanupInterval)
+	defer cleanupTicker.Stop()
+
 	logger.Info("버스 정보 API 모니터링 시작")
 	if cfg.APIType == "api2" {
 		logger.Info("API2 모드 - 공공데이터포털 버스위치정보")
@@ -94,17 +100,27 @@ func main() {
 	}
 
 	// 타이머로 반복 실행
-	for range ticker.C {
-		currentTime := time.Now()
-		logger.Infof("시간 체크: %s, 운영 중: %t",
-			currentTime.Format("15:04:05"), cfg.IsOperatingTime(currentTime))
+	for {
+		select {
+		case <-ticker.C:
+			currentTime := time.Now()
+			logger.Infof("시간 체크: %s, 운영 중: %t",
+				currentTime.Format("15:04:05"), cfg.IsOperatingTime(currentTime))
 
-		if cfg.IsOperatingTime(currentTime) {
-			processAPICall(apiClient, esService, busTracker, logger, cfg)
-		} else {
-			nextOperatingTime := cfg.GetNextOperatingTime(currentTime)
-			logger.Infof("운행 중단 시간. 다음 운행 시작: %s",
-				nextOperatingTime.Format("2006-01-02 15:04:05"))
+			if cfg.IsOperatingTime(currentTime) {
+				processAPICall(apiClient, esService, busTracker, logger, cfg)
+			} else {
+				nextOperatingTime := cfg.GetNextOperatingTime(currentTime)
+				logger.Infof("운행 중단 시간. 다음 운행 시작: %s",
+					nextOperatingTime.Format("2006-01-02 15:04:05"))
+			}
+
+		case <-cleanupTicker.C:
+			// 구간 운행 버스 정리 (환경변수 기반 시간)
+			removedCount := busTracker.CleanupMissingBuses(cfg.BusTimeoutDuration, logger)
+			if removedCount > 0 {
+				logger.Infof("정리 완료 - 현재 추적 중인 버스: %d대", busTracker.GetTrackedBusCount())
+			}
 		}
 	}
 }

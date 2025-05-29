@@ -160,16 +160,19 @@ func (ac *API1Client) FetchAllBusLocations(routeIDs []string) ([]models.BusLocat
 			allBusLocations = append(allBusLocations, result.busLocations...)
 			ac.logger.Infof("노선 %s: %d개 데이터 수신", result.routeID, len(result.busLocations))
 
-			// 첫 번째 데이터 샘플 로깅 (정류소 정보 포함)
-			firstBus := result.busLocations[0]
-			if firstBus.NodeNm != "" {
-				// 정류소 정보가 보강된 경우
-				ac.logger.Infof("  샘플 버스 - 차량번호: %s, 차량ID: %d, 정류장: %s (%d), 혼잡도: %d",
-					firstBus.PlateNo, firstBus.VehId, firstBus.NodeNm, firstBus.StationId, firstBus.Crowded)
-			} else {
-				// 정류소 정보가 없는 경우
-				ac.logger.Infof("  샘플 버스 - 차량번호: %s, 차량ID: %d, 정류장ID: %d, 혼잡도: %d",
-					firstBus.PlateNo, firstBus.VehId, firstBus.StationId, firstBus.Crowded)
+			// 모든 버스 데이터 로깅 (정류소 정보 포함)
+			for i, bus := range result.busLocations {
+				if bus.NodeNm != "" {
+					// 정류소 정보가 보강된 경우
+					ac.logger.Infof("  버스 %d/%d - 차량번호: %s, 차량ID: %d, 정류장: %s (%d), 순서: %d/%d, 혼잡도: %d",
+						i+1, len(result.busLocations), bus.PlateNo, bus.VehId, bus.NodeNm, bus.StationId,
+						bus.StationSeq, bus.TotalStations, bus.Crowded)
+				} else {
+					// 정류소 정보가 없는 경우
+					ac.logger.Infof("  버스 %d/%d - 차량번호: %s, 차량ID: %d, 정류장ID: %d, 순서: %d/%d, 혼잡도: %d",
+						i+1, len(result.busLocations), bus.PlateNo, bus.VehId, bus.StationId,
+						bus.StationSeq, bus.TotalStations, bus.Crowded)
+				}
 			}
 			successCount++
 		} else {

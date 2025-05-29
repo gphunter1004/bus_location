@@ -181,14 +181,17 @@ func (ac *API2Client) FetchAllBusLocations(routeIDs []string) ([]models.BusLocat
 			allBusLocations = append(allBusLocations, result.busLocations...)
 			ac.logger.Infof("노선 %s: %d개 데이터 수신", result.routeID, len(result.busLocations))
 
-			// 첫 번째 데이터 샘플 로깅 (정류소 정보 포함)
-			firstBus := result.busLocations[0]
-			if firstBus.NodeNm != "" {
-				ac.logger.Infof("  샘플 버스 - 차량번호: %s, 정류장: %s (%s), 순서: %d, GPS: (%.6f, %.6f)",
-					firstBus.PlateNo, firstBus.NodeNm, firstBus.NodeId, firstBus.NodeOrd, firstBus.GpsLati, firstBus.GpsLong)
-			} else {
-				ac.logger.Infof("  샘플 버스 - 차량번호: %s, 정류장ID: %d, 정류장순서: %d, GPS: (%.6f, %.6f)",
-					firstBus.PlateNo, firstBus.StationId, firstBus.StationSeq, firstBus.GpsLati, firstBus.GpsLong)
+			// 모든 버스 데이터 로깅 (정류소 정보 포함)
+			for i, bus := range result.busLocations {
+				if bus.NodeNm != "" {
+					ac.logger.Infof("  버스 %d/%d - 차량번호: %s, 정류장: %s (%s), 순서: %d/%d, GPS: (%.6f, %.6f)",
+						i+1, len(result.busLocations), bus.PlateNo, bus.NodeNm, bus.NodeId,
+						bus.NodeOrd, bus.TotalStations, bus.GpsLati, bus.GpsLong)
+				} else {
+					ac.logger.Infof("  버스 %d/%d - 차량번호: %s, 정류장ID: %d, 정류장순서: %d/%d, GPS: (%.6f, %.6f)",
+						i+1, len(result.busLocations), bus.PlateNo, bus.StationId,
+						bus.StationSeq, bus.TotalStations, bus.GpsLati, bus.GpsLong)
+				}
 			}
 			successCount++
 		} else {
