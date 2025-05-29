@@ -1,4 +1,4 @@
-// services/simple_orchestrator.go
+// services/api_orchestrator.go - 통합 캐시 지원 버전
 package services
 
 import (
@@ -10,7 +10,7 @@ import (
 	"bus-tracker/utils"
 )
 
-// MultiAPIOrchestrator 완전 간소화된 다중 API 오케스트레이터
+// MultiAPIOrchestrator 통합 캐시를 지원하는 다중 API 오케스트레이터
 type MultiAPIOrchestrator struct {
 	config      *config.Config
 	logger      *utils.Logger
@@ -26,7 +26,7 @@ type MultiAPIOrchestrator struct {
 	mutex     sync.RWMutex
 }
 
-// NewMultiAPIOrchestrator 새로운 다중 API 오케스트레이터 생성
+// NewMultiAPIOrchestrator 새로운 다중 API 오케스트레이터 생성 (통합 캐시 지원)
 func NewMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
 	api1Client *API1Client, api2Client *API2Client,
 	dataManager *UnifiedDataManager) *MultiAPIOrchestrator {
@@ -54,20 +54,20 @@ func (mao *MultiAPIOrchestrator) Start() error {
 		return nil
 	}
 
-	mao.logger.Info("=== 다중 API 오케스트레이터 시작 (즉시 처리 모드) ===")
+	mao.logger.Info("=== 다중 API 오케스트레이터 시작 (통합 캐시 + 즉시 처리) ===")
 
 	// API1 워커 시작 (활성화된 경우)
 	if mao.config.API1Config.Enabled && mao.api1Client != nil {
 		mao.wg.Add(1)
 		go mao.runAPI1Worker()
-		mao.logger.Infof("API1 워커 시작 - 주기: %v (데이터 수신시 즉시 통합+ES 전송)", mao.config.API1Config.Interval)
+		mao.logger.Infof("API1 워커 시작 - 주기: %v (통합 캐시 기반)", mao.config.API1Config.Interval)
 	}
 
 	// API2 워커 시작 (활성화된 경우)
 	if mao.config.API2Config.Enabled && mao.api2Client != nil {
 		mao.wg.Add(1)
 		go mao.runAPI2Worker()
-		mao.logger.Infof("API2 워커 시작 - 주기: %v (데이터 수신시 즉시 통합+ES 전송)", mao.config.API2Config.Interval)
+		mao.logger.Infof("API2 워커 시작 - 주기: %v (통합 캐시 기반)", mao.config.API2Config.Interval)
 	}
 
 	// 정리 워커 시작
@@ -76,7 +76,7 @@ func (mao *MultiAPIOrchestrator) Start() error {
 	mao.logger.Info("정리 워커 시작")
 
 	mao.isRunning = true
-	mao.logger.Info("=== 모든 워커 시작 완료 (데이터 통합 워커 제거됨) ===")
+	mao.logger.Info("=== 모든 워커 시작 완료 (통합 캐시 기반 처리) ===")
 
 	return nil
 }
@@ -102,22 +102,18 @@ func (mao *MultiAPIOrchestrator) Stop() {
 	mao.logger.Info("=== 다중 API 오케스트레이터 정지 완료 ===")
 }
 
-// runAPI1Worker API1 워커 실행
+// runAPI1Worker API1 워커 실행 (통합 캐시 기반)
 func (mao *MultiAPIOrchestrator) runAPI1Worker() {
 	defer mao.wg.Done()
 
 	ticker := time.NewTicker(mao.config.API1Config.Interval)
 	defer ticker.Stop()
 
-	mao.logger.Info("API1 워커 시작됨 (즉시 통합+ES 전송)")
-
-	// 정류소 캐시 로드 완료 대기 (중복 데이터 방지)
-	mao.logger.Info("API1: 정류소 캐시 로드 완료 대기 중...")
-	time.Sleep(2 * time.Second) // 캐시 로드 완료를 위한 짧은 지연
+	mao.logger.Info("API1 워커 시작됨 (통합 캐시 기반 + 순차 검증)")
 
 	// 첫 번째 즉시 실행
 	if mao.config.IsOperatingTime(time.Now()) {
-		mao.logger.Info("API1: 정류소 캐시 로드 완료 후 첫 호출 시작")
+		mao.logger.Info("API1: 통합 캐시 기반 첫 호출 시작")
 		mao.processAPI1Call()
 	}
 
@@ -138,22 +134,21 @@ func (mao *MultiAPIOrchestrator) runAPI1Worker() {
 	}
 }
 
-// runAPI2Worker API2 워커 실행
+// runAPI2Worker API2 워커 실행 (통합 캐시 기반)
 func (mao *MultiAPIOrchestrator) runAPI2Worker() {
 	defer mao.wg.Done()
 
 	ticker := time.NewTicker(mao.config.API2Config.Interval)
 	defer ticker.Stop()
 
-	mao.logger.Info("API2 워커 시작됨 (즉시 통합+ES 전송)")
+	mao.logger.Info("API2 워커 시작됨 (통합 캐시 기반 + 순차 검증)")
 
-	// 정류소 캐시 로드 완료 대기 (중복 데이터 방지)
-	mao.logger.Info("API2: 정류소 캐시 로드 완료 대기 중...")
-	time.Sleep(3 * time.Second) // API1보다 1초 더 지연 (순차 시작)
+	// API1과 시간차를 두어 시작 (순차 시작으로 부하 분산)
+	time.Sleep(3 * time.Second)
 
 	// 첫 번째 즉시 실행
 	if mao.config.IsOperatingTime(time.Now()) {
-		mao.logger.Info("API2: 정류소 캐시 로드 완료 후 첫 호출 시작")
+		mao.logger.Info("API2: 통합 캐시 기반 첫 호출 시작")
 		mao.processAPI2Call()
 	}
 
@@ -194,13 +189,13 @@ func (mao *MultiAPIOrchestrator) runCleanupWorker() {
 	}
 }
 
-// processAPI1Call API1 호출 처리 (즉시 통합+ES 전송)
+// processAPI1Call API1 호출 처리 (통합 캐시 기반)
 func (mao *MultiAPIOrchestrator) processAPI1Call() {
 	if mao.api1Client == nil {
 		return
 	}
 
-	mao.logger.Info("=== API1 호출 시작 (즉시 통합+ES 전송) ===")
+	mao.logger.Info("=== API1 호출 시작 (통합 캐시 + 순차 검증) ===")
 
 	busLocations, err := mao.api1Client.FetchAllBusLocations(mao.config.API1Config.RouteIDs)
 	if err != nil {
@@ -208,18 +203,18 @@ func (mao *MultiAPIOrchestrator) processAPI1Call() {
 		return
 	}
 
-	// UpdateAPI1Data에서 즉시 통합 및 변경된 것은 ES 전송까지 수행
+	// 통합 데이터 매니저에서 순차 검증 및 즉시 ES 전송 수행
 	mao.dataManager.UpdateAPI1Data(busLocations)
-	mao.logger.Infof("API1 호출 완료 - %d대 버스 (즉시 처리됨)", len(busLocations))
+	mao.logger.Infof("API1 처리 완료 - %d대 버스 (통합 캐시 + 순차 검증 적용)", len(busLocations))
 }
 
-// processAPI2Call API2 호출 처리 (즉시 통합+ES 전송)
+// processAPI2Call API2 호출 처리 (통합 캐시 기반)
 func (mao *MultiAPIOrchestrator) processAPI2Call() {
 	if mao.api2Client == nil {
 		return
 	}
 
-	mao.logger.Info("=== API2 호출 시작 (즉시 통합+ES 전송) ===")
+	mao.logger.Info("=== API2 호출 시작 (통합 캐시 + 순차 검증) ===")
 
 	busLocations, err := mao.api2Client.FetchAllBusLocations(mao.config.API2Config.RouteIDs)
 	if err != nil {
@@ -227,9 +222,9 @@ func (mao *MultiAPIOrchestrator) processAPI2Call() {
 		return
 	}
 
-	// UpdateAPI2Data에서 즉시 통합 및 변경된 것은 ES 전송까지 수행
+	// 통합 데이터 매니저에서 순차 검증 및 즉시 ES 전송 수행
 	mao.dataManager.UpdateAPI2Data(busLocations)
-	mao.logger.Infof("API2 호출 완료 - %d대 버스 (즉시 처리됨)", len(busLocations))
+	mao.logger.Infof("API2 처리 완료 - %d대 버스 (통합 캐시 + 순차 검증 적용)", len(busLocations))
 }
 
 // processCleanup 정리 작업 처리
@@ -239,7 +234,7 @@ func (mao *MultiAPIOrchestrator) processCleanup() {
 	// 통합 데이터 매니저에서 오래된 데이터 정리
 	removedUnified := mao.dataManager.CleanupOldData(mao.config.DataRetentionPeriod)
 
-	// BusTracker에서 미목격 버스 정리 (별도로 실행)
+	// BusTracker에서 미목격 버스 정리
 	removedBuses := 0
 	if mao.dataManager != nil && mao.dataManager.busTracker != nil {
 		removedBuses = mao.dataManager.busTracker.CleanupMissingBuses(mao.config.BusTimeoutDuration, mao.logger)
