@@ -7,15 +7,16 @@ import (
 	"time"
 
 	"bus-tracker/config"
-	"bus-tracker/utils"
+	"bus-tracker/internal/services/api"
+	"bus-tracker/internal/utils"
 )
 
 // MultiAPIOrchestrator 통합 캐시를 지원하는 다중 API 오케스트레이터
 type MultiAPIOrchestrator struct {
 	config      *config.Config
 	logger      *utils.Logger
-	api1Client  *API1Client
-	api2Client  *API2Client
+	api1Client  *api.API1Client
+	api2Client  *api.API2Client
 	dataManager *UnifiedDataManager
 
 	// 제어 관련
@@ -28,7 +29,7 @@ type MultiAPIOrchestrator struct {
 
 // NewMultiAPIOrchestrator 새로운 다중 API 오케스트레이터 생성 (통합 캐시 지원)
 func NewMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
-	api1Client *API1Client, api2Client *API2Client,
+	api1Client *api.API1Client, api2Client *api.API2Client,
 	dataManager *UnifiedDataManager) *MultiAPIOrchestrator {
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -1,4 +1,5 @@
-package services
+// internal/services/cache/station_cache.go
+package cache
 
 import (
 	"encoding/json"
@@ -10,8 +11,8 @@ import (
 	"time"
 
 	"bus-tracker/config"
-	"bus-tracker/models"
-	"bus-tracker/utils"
+	"bus-tracker/internal/models"
+	"bus-tracker/internal/utils"
 )
 
 // StationCacheService 정류소 정보 캐시 서비스 (통합 키 기반)
@@ -39,8 +40,7 @@ func NewStationCacheService(cfg *config.Config, logger *utils.Logger, apiType st
 	}
 }
 
-// LoadStationCache 모든 노선의 정류소 정보를 미리 로드
-// services/station_cache.go의 LoadStationCache 메서드 수정
+// 🔧 유틸리티 함수들은 utils 패키지 사용
 
 // LoadStationCache 모든 노선의 정류소 정보를 미리 로드 (중복 제거)
 func (scs *StationCacheService) LoadStationCache(routeIDs []string) error {
@@ -174,7 +174,7 @@ func (scs *StationCacheService) loadAPI1StationCache(routeID string) error {
 	apiURL := scs.buildAPI1StationInfoURL(api1RouteID)
 
 	scs.logger.Infof("📡 API1 정류소 정보 API 호출")
-	scs.logger.Infof("🔗 요청 URL: %s", maskSensitiveURL(apiURL, scs.config.ServiceKey))
+	scs.logger.Infof("🔗 요청 URL: %s", utils.MaskSensitiveURL(apiURL, scs.config.ServiceKey))
 
 	// API 호출
 	resp, err := scs.client.Get(apiURL)
@@ -257,7 +257,7 @@ func (scs *StationCacheService) loadAPI2StationCache(routeID string) error {
 	apiURL := scs.buildAPI2StationInfoURL(api2RouteID)
 
 	scs.logger.Infof("📡 API2 정류소 정보 API 호출")
-	scs.logger.Infof("🔗 요청 URL: %s", maskSensitiveURL(apiURL, scs.config.ServiceKey))
+	scs.logger.Infof("🔗 요청 URL: %s", utils.MaskSensitiveURL(apiURL, scs.config.ServiceKey))
 
 	// API 호출
 	resp, err := scs.client.Get(apiURL)
@@ -356,12 +356,6 @@ func (scs *StationCacheService) GetRouteStationCount(routeID string) int {
 	}
 	return 0
 }
-
-// EnrichBusLocationWithStationInfo 버스 위치 정보에 정류소 정보 보강
-// services/station_cache.go의 EnrichBusLocationWithStationInfo 메서드 수정
-
-// EnrichBusLocationWithStationInfo 버스 위치 정보에 정류소 정보 보강
-// services/station_cache.go의 EnrichBusLocationWithStationInfo 메서드 수정
 
 // EnrichBusLocationWithStationInfo 버스 위치 정보에 정류소 정보 보강
 func (scs *StationCacheService) EnrichBusLocationWithStationInfo(busLocation *models.BusLocation, routeID string) {
@@ -506,7 +500,7 @@ func (scs *StationCacheService) buildAPI1StationInfoURL(routeID string) string {
 		"routeId=" + routeID,
 		"format=json",
 	}
-	return baseURL + "?" + joinStrings(params, "&")
+	return baseURL + "?" + utils.JoinStrings(params, "&")
 }
 
 // buildAPI2StationInfoURL API2용 정류소 정보 API URL 생성
@@ -519,7 +513,7 @@ func (scs *StationCacheService) buildAPI2StationInfoURL(routeID string) string {
 		"_type=json",
 		"numOfRows=200",
 	}
-	return baseURL + "?" + joinStrings(params, "&")
+	return baseURL + "?" + utils.JoinStrings(params, "&")
 }
 
 // printCacheStatistics 캐시 통계 출력

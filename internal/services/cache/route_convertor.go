@@ -1,5 +1,5 @@
-// services/route_id_converter.go - Route ID 형식 변환 전용 파일
-package services
+// internal/services/cache/route_converter.go
+package cache
 
 import (
 	"fmt"

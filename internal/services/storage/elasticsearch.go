@@ -1,4 +1,4 @@
-package services
+package storage
 
 import (
 	"bytes"
@@ -13,8 +13,8 @@ import (
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 
 	"bus-tracker/config"
-	"bus-tracker/models"
-	"bus-tracker/utils"
+	"bus-tracker/internal/models"
+	"bus-tracker/internal/utils"
 )
 
 // ElasticsearchService Elasticsearch 관련 작업을 담당하는 서비스
@@ -28,13 +28,13 @@ func NewElasticsearchService(cfg *config.Config, logger *utils.Logger) *Elastics
 	esConfig := elasticsearch.Config{
 		Addresses: []string{cfg.ElasticsearchURL},
 	}
-	
+
 	// 인증 정보가 있는 경우 추가
 	if cfg.ElasticsearchUsername != "" {
 		esConfig.Username = cfg.ElasticsearchUsername
 		esConfig.Password = cfg.ElasticsearchPassword
 	}
-	
+
 	client, err := elasticsearch.NewClient(esConfig)
 	if err != nil {
 		logger.Fatalf("Elasticsearch 클라이언트 생성 실패: %v", err)
@@ -53,11 +53,11 @@ func (es *ElasticsearchService) TestConnection() error {
 		return fmt.Errorf("연결 실패: %v", err)
 	}
 	defer info.Body.Close()
-	
+
 	if info.IsError() {
 		return fmt.Errorf("연결 오류: %s", info.String())
 	}
-	
+
 	return nil
 }
 
@@ -75,25 +75,25 @@ func (es *ElasticsearchService) BulkSendBusLocations(indexName string, busLocati
 	for _, busLocation := range busLocations {
 		// 모든 버스 데이터에 동일한 타임스탬프 적용
 		busLocation.Timestamp = timestamp
-		
+
 		// 인덱스 메타데이터
 		meta := map[string]interface{}{
 			"index": map[string]interface{}{
 				"_index": indexName,
 			},
 		}
-		
+
 		metaBytes, err := json.Marshal(meta)
 		if err != nil {
 			return fmt.Errorf("메타데이터 마샬링 실패: %v", err)
 		}
-		
+
 		// 문서 데이터
 		docBytes, err := json.Marshal(busLocation)
 		if err != nil {
 			return fmt.Errorf("문서 데이터 마샬링 실패: %v", err)
 		}
-		
+
 		// 벌크 요청 형식: 각 라인은 \n으로 구분
 		buf.Write(metaBytes)
 		buf.WriteByte('\n')
@@ -127,7 +127,7 @@ func (es *ElasticsearchService) BulkSendBusLocations(indexName string, busLocati
 	// 에러가 있는 항목 체크
 	errorCount := 0
 	successCount := 0
-	
+
 	for _, item := range bulkResponse.Items {
 		if item.Index.Error != nil {
 			errorCount++
@@ -137,7 +137,7 @@ func (es *ElasticsearchService) BulkSendBusLocations(indexName string, busLocati
 		}
 	}
 
-	es.logger.Infof("벌크 인서트 완료 (%s) - 성공: %d, 실패: %d, 총 소요시간: %dms", 
+	es.logger.Infof("벌크 인서트 완료 (%s) - 성공: %d, 실패: %d, 총 소요시간: %dms",
 		timestamp, successCount, errorCount, bulkResponse.Took)
 
 	if errorCount > 0 {

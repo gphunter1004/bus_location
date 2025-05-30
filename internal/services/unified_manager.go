@@ -4,8 +4,11 @@ import (
 	"sync"
 	"time"
 
-	"bus-tracker/models"
-	"bus-tracker/utils"
+	"bus-tracker/internal/models"
+	"bus-tracker/internal/services/cache"
+	"bus-tracker/internal/services/storage"
+	"bus-tracker/internal/services/tracker"
+	"bus-tracker/internal/utils"
 )
 
 // UnifiedBusData 통합 버스 데이터 구조체
@@ -51,16 +54,16 @@ type UnifiedDataManager struct {
 	dataStore    map[string]*UnifiedBusData
 	mutex        sync.RWMutex
 	logger       *utils.Logger
-	busTracker   *BusTracker
-	stationCache *StationCacheService // 🔧 UnifiedStationCacheService → StationCacheService 변경
-	esService    *ElasticsearchService
+	busTracker   *tracker.BusTracker
+	stationCache *cache.StationCacheService // 🔧 UnifiedStationCacheService → StationCacheService 변경
+	esService    *storage.ElasticsearchService
 	indexName    string
 }
 
 // NewUnifiedDataManager 생성자 수정
-func NewUnifiedDataManager(logger *utils.Logger, busTracker *BusTracker,
-	stationCache *StationCacheService, // 🔧 파라미터 타입 변경
-	esService *ElasticsearchService, indexName string) *UnifiedDataManager {
+func NewUnifiedDataManager(logger *utils.Logger, busTracker *tracker.BusTracker,
+	stationCache *cache.StationCacheService, // 🔧 파라미터 타입 변경
+	esService *storage.ElasticsearchService, indexName string) *UnifiedDataManager {
 
 	return &UnifiedDataManager{
 		dataStore:    make(map[string]*UnifiedBusData),

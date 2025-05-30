@@ -9,8 +9,12 @@ import (
 	"time"
 
 	"bus-tracker/config"
-	"bus-tracker/services"
-	"bus-tracker/utils"
+	"bus-tracker/internal/services"
+	"bus-tracker/internal/services/api"
+	"bus-tracker/internal/services/cache"
+	"bus-tracker/internal/services/storage"
+	"bus-tracker/internal/services/tracker"
+	"bus-tracker/internal/utils"
 )
 
 func main() {
@@ -31,8 +35,6 @@ func main() {
 		log.Fatalf("지원하지 않는 모드입니다: %s (api1, api2, unified 중 선택)", cfg.Mode)
 	}
 }
-
-// main.go의 runAPI1Mode 함수에서 캐시 로딩 부분을 다음과 같이 수정
 
 func runAPI1Mode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("=== API1 모드로 실행 ===")
@@ -56,11 +58,11 @@ func runAPI1Mode(cfg *config.Config, logger *utils.Logger) {
 		BusTimeoutDuration:    cfg.BusTimeoutDuration,
 	}
 
-	busTracker := services.NewBusTracker()
-	apiClient := services.NewAPI1Client(api1Config, logger)
-	esService := services.NewElasticsearchService(api1Config, logger)
+	busTracker := tracker.NewBusTracker()
+	apiClient := api.NewAPI1Client(api1Config, logger)
+	esService := storage.NewElasticsearchService(api1Config, logger)
 
-	// 🔧 캐시 로딩 디버깅 강화
+	// 캐시 로딩
 	logger.Info("🏗️ API1 정류소 정보 캐시 로딩 시작")
 	logger.Infof("📋 로딩할 Route IDs: %v", cfg.API1Config.RouteIDs)
 	logger.Infof("📊 Route IDs 개수: %d개", len(cfg.API1Config.RouteIDs))
@@ -116,9 +118,9 @@ func runAPI2Mode(cfg *config.Config, logger *utils.Logger) {
 		BusTimeoutDuration:    cfg.BusTimeoutDuration,
 	}
 
-	busTracker := services.NewBusTracker()
-	apiClient := services.NewAPI2Client(api2Config, logger)
-	esService := services.NewElasticsearchService(api2Config, logger)
+	busTracker := tracker.NewBusTracker()
+	apiClient := api.NewAPI2Client(api2Config, logger)
+	esService := storage.NewElasticsearchService(api2Config, logger)
 
 	logger.Info("API2 정류소 정보 캐시 로딩 시작")
 	if err := apiClient.LoadStationCache(cfg.API2Config.RouteIDs); err != nil {
@@ -136,31 +138,26 @@ func runAPI2Mode(cfg *config.Config, logger *utils.Logger) {
 	runSingleAPILoop(apiClient, esService, busTracker, api2Config, logger, cfg.API2Config.RouteIDs, cfg.API2Config.Interval)
 }
 
-// main.go 파일에서 runUnifiedMode 함수만 다음과 같이 교체하세요
-// (파일의 다른 부분은 그대로 두고 이 함수만 교체)
-
-// main.go의 runUnifiedMode 함수 수정 (통합 캐시 공유)
-
 func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("=== 통합 모드로 실행 (완전 즉시 처리 + 통합 캐시) ===")
 
 	logger.Info("=== 서비스 초기화 시작 ===")
 
-	busTracker := services.NewBusTracker()
+	busTracker := tracker.NewBusTracker()
 	logger.Info("버스 트래커 초기화 완료")
 
-	esService := services.NewElasticsearchService(cfg, logger)
+	esService := storage.NewElasticsearchService(cfg, logger)
 
 	if err := esService.TestConnection(); err != nil {
 		log.Fatalf("Elasticsearch 연결 실패: %v", err)
 	}
 	logger.Info("Elasticsearch 연결 테스트 성공")
 
-	// 🔧 통합 정류소 캐시를 일반 StationCacheService로 변경
+	// 통합 정류소 캐시를 일반 StationCacheService로 변경
 	logger.Info("=== 통합 정류소 캐시 초기화 시작 ===")
 
 	// API2를 우선으로 사용하는 통합 캐시 생성
-	unifiedStationCache := services.NewStationCacheService(cfg, logger, "api2")
+	unifiedStationCache := cache.NewStationCacheService(cfg, logger, "api2")
 
 	var api1RouteIDs, api2RouteIDs []string
 	if cfg.API1Config.Enabled {
@@ -174,7 +171,7 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Infof("- API1 노선: %v", api1RouteIDs)
 	logger.Infof("- API2 노선: %v", api2RouteIDs)
 
-	// 🔧 모든 노선 ID를 하나의 배열로 합쳐서 로드
+	// 모든 노선 ID를 하나의 배열로 합쳐서 로드
 	allRouteIDs := append(api1RouteIDs, api2RouteIDs...)
 
 	if err := unifiedStationCache.LoadStationCache(allRouteIDs); err != nil {
@@ -185,9 +182,9 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 		logger.Infof("✅ 통합 정류소 캐시 로드 완료 - 노선: %d개, 정류소: %d개", routeCount, stationCount)
 	}
 
-	// 🔧 중요: API 클라이언트에 통합 캐시를 전달하도록 수정
-	var api1Client *services.API1Client
-	var api2Client *services.API2Client
+	// API 클라이언트에 통합 캐시를 전달하도록 수정
+	var api1Client *api.API1Client
+	var api2Client *api.API2Client
 
 	if cfg.API1Config.Enabled {
 		logger.Info("=== API1 클라이언트 초기화 (통합 캐시 공유) ===")
@@ -199,8 +196,8 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 			APIType:    "api1",
 		}
 
-		// 🔧 API1 클라이언트를 통합 캐시와 함께 생성
-		api1Client = services.NewAPI1ClientWithSharedCache(api1Config, logger, unifiedStationCache)
+		// API1 클라이언트를 통합 캐시와 함께 생성
+		api1Client = api.NewAPI1ClientWithSharedCache(api1Config, logger, unifiedStationCache)
 		logger.Infof("API1 클라이언트 초기화 완료 - 노선 %d개 (통합 캐시 공유)", len(cfg.API1Config.RouteIDs))
 	}
 
@@ -214,12 +211,12 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 			APIType:    "api2",
 		}
 
-		// 🔧 API2 클라이언트를 통합 캐시와 함께 생성
-		api2Client = services.NewAPI2ClientWithSharedCache(api2Config, logger, unifiedStationCache)
+		// API2 클라이언트를 통합 캐시와 함께 생성
+		api2Client = api.NewAPI2ClientWithSharedCache(api2Config, logger, unifiedStationCache)
 		logger.Infof("API2 클라이언트 초기화 완료 - 노선 %d개 (통합 캐시 공유)", len(cfg.API2Config.RouteIDs))
 	}
 
-	// 🔧 NewUnifiedDataManager 호출 시 StationCacheService 전달
+	// NewUnifiedDataManager 호출 시 StationCacheService 전달
 	dataManager := services.NewUnifiedDataManager(logger, busTracker, unifiedStationCache, esService, cfg.IndexName)
 	logger.Info("통합 데이터 매니저 초기화 완료 (통합 캐시 기반 + 즉시 처리)")
 
@@ -255,8 +252,8 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("=== 통합 버스 트래커 종료 완료 ===")
 }
 
-func runSingleAPILoop(apiClient services.BusAPIClient, esService *services.ElasticsearchService,
-	busTracker *services.BusTracker, cfg *config.Config, logger *utils.Logger,
+func runSingleAPILoop(apiClient api.BusAPIClient, esService *storage.ElasticsearchService,
+	busTracker *tracker.BusTracker, cfg *config.Config, logger *utils.Logger,
 	routeIDs []string, interval time.Duration) {
 
 	ticker := time.NewTicker(interval)
@@ -315,8 +312,8 @@ func runSingleAPILoop(apiClient services.BusAPIClient, esService *services.Elast
 	}
 }
 
-func processSingleAPICall(apiClient services.BusAPIClient, esService *services.ElasticsearchService,
-	busTracker *services.BusTracker, logger *utils.Logger, routeIDs []string, indexName string) {
+func processSingleAPICall(apiClient api.BusAPIClient, esService *storage.ElasticsearchService,
+	busTracker *tracker.BusTracker, logger *utils.Logger, routeIDs []string, indexName string) {
 
 	logger.Infof("=== 버스 위치 API 호출 시작 (%s, %s) ===",
 		time.Now().Format("15:04:05"), apiClient.GetAPIType())
@@ -414,6 +411,7 @@ func printUnifiedSystemStatus(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("처리 방식: API 데이터 수신 → 순차검증 → 즉시 통합 → 변경 감지 → 즉시 ES 전송")
 	logger.Info("캐시 전략: API2 우선 (GPS+상세정보), API1 보조")
 	logger.Info("순차 검증: 역순 데이터의 정류장 정보 제외, 버스 정보만 업데이트")
+	logger.Info("배치 처리: 없음 (모든 처리가 즉시 수행됨)")
 
 	logger.Info("===============================")
 }

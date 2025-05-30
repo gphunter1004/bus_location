@@ -1,24 +1,25 @@
-package services
+// internal/services/api/api2_client.go
+package api
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"bus-tracker/config"
-	"bus-tracker/models"
-	"bus-tracker/utils"
+	"bus-tracker/internal/models"
+	"bus-tracker/internal/services/cache"
+	"bus-tracker/internal/utils"
 )
 
 // API2Client 공공데이터포털 버스위치정보 API 클라이언트
 type API2Client struct {
 	APIClientBase
 	client       *http.Client
-	stationCache *StationCacheService
+	stationCache *cache.StationCacheService
 }
 
 // NewAPI2Client 새로운 API2 클라이언트 생성 (기본 버전)
@@ -31,12 +32,12 @@ func NewAPI2Client(cfg *config.Config, logger *utils.Logger) *API2Client {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		stationCache: NewStationCacheService(cfg, logger, "api2"),
+		stationCache: cache.NewStationCacheService(cfg, logger, "api2"),
 	}
 }
 
 // NewAPI2ClientWithSharedCache 공유 캐시를 사용하는 API2 클라이언트 생성 (통합 모드용)
-func NewAPI2ClientWithSharedCache(cfg *config.Config, logger *utils.Logger, sharedCache *StationCacheService) *API2Client {
+func NewAPI2ClientWithSharedCache(cfg *config.Config, logger *utils.Logger, sharedCache *cache.StationCacheService) *API2Client {
 	logger.Infof("🔗 API2 클라이언트 생성 - 통합 캐시 공유 모드")
 	return &API2Client{
 		APIClientBase: APIClientBase{
@@ -86,7 +87,7 @@ func (ac *API2Client) validateAPI2RouteID(routeID string) error {
 	}
 
 	// API2는 GGB로 시작해야 함
-	if !strings.HasPrefix(routeID, "GGB") {
+	if !utils.HasPrefix(routeID, "GGB") {
 		return fmt.Errorf("API2 routeID는 'GGB'로 시작해야 합니다: '%s'", routeID)
 	}
 
@@ -117,7 +118,7 @@ func (ac *API2Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 	apiURL := ac.buildAPIURL(routeID)
 
 	ac.logger.Infof("🚌 API2 호출 시작 - 노선: %s", routeID)
-	ac.logger.Infof("📡 요청 URL: %s", maskSensitiveURL(apiURL, ac.config.ServiceKey))
+	ac.logger.Infof("📡 요청 URL: %s", utils.MaskSensitiveURL(apiURL, ac.config.ServiceKey))
 
 	resp, err := ac.client.Get(apiURL)
 	if err != nil {
@@ -144,7 +145,6 @@ func (ac *API2Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 	return ac.parseResponse(body, routeID)
 }
 
-// parseResponse API2 응답 파싱
 // parseResponse API2 응답 파싱 (검증 강화)
 func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLocation, error) {
 	var apiResp models.API2Response
@@ -320,10 +320,10 @@ func (ac *API2Client) buildAPIURL(routeID string) string {
 
 	baseURL := ac.config.APIBaseURL
 	if len(params) > 0 {
-		if contains(baseURL, "?") {
-			return baseURL + "&" + joinStrings(params, "&")
+		if utils.Contains(baseURL, "?") {
+			return baseURL + "&" + utils.JoinStrings(params, "&")
 		}
-		return baseURL + "?" + joinStrings(params, "&")
+		return baseURL + "?" + utils.JoinStrings(params, "&")
 	}
 	return baseURL
 }

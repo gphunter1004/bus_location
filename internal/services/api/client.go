@@ -1,9 +1,10 @@
-package services
+// internal/services/api/client.go
+package api
 
 import (
 	"bus-tracker/config"
-	"bus-tracker/models"
-	"bus-tracker/utils"
+	"bus-tracker/internal/models"
+	"bus-tracker/internal/utils"
 )
 
 // BusAPIClient 버스 API 클라이언트 공통 인터페이스
@@ -17,8 +18,14 @@ type BusAPIClient interface {
 	// GetAPIType API 타입 반환
 	GetAPIType() string
 
-	// LoadStationCache 정류소 정보 캐시 로드 (API2 전용, API1은 빈 구현)
+	// LoadStationCache 정류소 정보 캐시 로드
 	LoadStationCache(routeIDs []string) error
+
+	// GetCacheStatistics 캐시 통계 반환
+	GetCacheStatistics() (int, int)
+
+	// GetRouteStationCount 특정 노선의 전체 정류소 개수 반환
+	GetRouteStationCount(routeID string) int
 }
 
 // NewBusAPIClient API 타입에 따라 적절한 클라이언트 생성 (팩토리 패턴)

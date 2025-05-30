@@ -1,4 +1,5 @@
-package services
+// internal/services/api/api1_client.go
+package api
 
 import (
 	"encoding/json"
@@ -9,15 +10,16 @@ import (
 	"time"
 
 	"bus-tracker/config"
-	"bus-tracker/models"
-	"bus-tracker/utils"
+	"bus-tracker/internal/models"
+	"bus-tracker/internal/services/cache"
+	"bus-tracker/internal/utils"
 )
 
 // API1Client 경기버스정보 API 클라이언트
 type API1Client struct {
 	APIClientBase
 	client       *http.Client
-	stationCache *StationCacheService
+	stationCache *cache.StationCacheService
 }
 
 // NewAPI1Client 새로운 API1 클라이언트 생성 (기본 버전)
@@ -30,12 +32,12 @@ func NewAPI1Client(cfg *config.Config, logger *utils.Logger) *API1Client {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		stationCache: NewStationCacheService(cfg, logger, "api1"),
+		stationCache: cache.NewStationCacheService(cfg, logger, "api1"),
 	}
 }
 
 // NewAPI1ClientWithSharedCache 공유 캐시를 사용하는 API1 클라이언트 생성 (통합 모드용)
-func NewAPI1ClientWithSharedCache(cfg *config.Config, logger *utils.Logger, sharedCache *StationCacheService) *API1Client {
+func NewAPI1ClientWithSharedCache(cfg *config.Config, logger *utils.Logger, sharedCache *cache.StationCacheService) *API1Client {
 	logger.Infof("🔗 API1 클라이언트 생성 - 통합 캐시 공유 모드")
 	return &API1Client{
 		APIClientBase: APIClientBase{
@@ -82,7 +84,7 @@ func (ac *API1Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 	apiURL := ac.buildAPIURL(routeID)
 
 	ac.logger.Infof("🚌 API1 호출 시작 - 노선: %s", routeID)
-	ac.logger.Infof("📡 요청 URL: %s", maskSensitiveURL(apiURL, ac.config.ServiceKey))
+	ac.logger.Infof("📡 요청 URL: %s", utils.MaskSensitiveURL(apiURL, ac.config.ServiceKey))
 
 	resp, err := ac.client.Get(apiURL)
 	if err != nil {
@@ -246,10 +248,10 @@ func (ac *API1Client) buildAPIURL(routeID string) string {
 
 	baseURL := ac.config.APIBaseURL
 	if len(params) > 0 {
-		if contains(baseURL, "?") {
-			return baseURL + "&" + joinStrings(params, "&")
+		if utils.Contains(baseURL, "?") {
+			return baseURL + "&" + utils.JoinStrings(params, "&")
 		}
-		return baseURL + "?" + joinStrings(params, "&")
+		return baseURL + "?" + utils.JoinStrings(params, "&")
 	}
 	return baseURL
 }
