@@ -15,6 +15,7 @@ import (
 type UnifiedBusData struct {
 	PlateNo           string              `json:"plateNo"`
 	RouteId           int64               `json:"routeId"`
+	RouteNm           string              `json:"routeNm"` // API2 노선번호 추가
 	LastUpdate        time.Time           `json:"lastUpdate"`
 	CurrentStationSeq int                 `json:"currentStationSeq"`
 	CurrentStationId  int64               `json:"currentStationId"`
@@ -26,6 +27,7 @@ type UnifiedBusData struct {
 	DataSources       []string            `json:"dataSources"`
 	LastAPI1Update    time.Time           `json:"lastAPI1Update,omitempty"`
 	LastAPI2Update    time.Time           `json:"lastAPI2Update,omitempty"`
+	TripNumber        int                 `json:"tripNumber"` // 운행 차수 추가
 }
 
 type API1BusInfo struct {
@@ -45,6 +47,7 @@ type API2BusInfo struct {
 	NodeId     string    `json:"nodeId"`
 	NodeNm     string    `json:"nodeNm"`
 	NodeOrd    int       `json:"nodeOrd"`
+	RouteNm    string    `json:"routeNm"` // 노선번호 추가
 	GpsLati    float64   `json:"gpsLati"`
 	GpsLong    float64   `json:"gpsLong"`
 	UpdateTime time.Time `json:"updateTime"`
@@ -55,14 +58,14 @@ type UnifiedDataManager struct {
 	mutex        sync.RWMutex
 	logger       *utils.Logger
 	busTracker   *tracker.BusTracker
-	stationCache *cache.StationCacheService // 🔧 UnifiedStationCacheService → StationCacheService 변경
+	stationCache *cache.StationCacheService
 	esService    *storage.ElasticsearchService
 	indexName    string
 }
 
-// NewUnifiedDataManager 생성자 수정
+// NewUnifiedDataManager 생성자
 func NewUnifiedDataManager(logger *utils.Logger, busTracker *tracker.BusTracker,
-	stationCache *cache.StationCacheService, // 🔧 파라미터 타입 변경
+	stationCache *cache.StationCacheService,
 	esService *storage.ElasticsearchService, indexName string) *UnifiedDataManager {
 
 	return &UnifiedDataManager{
@@ -80,15 +83,8 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 	defer udm.mutex.Unlock()
 
 	now := time.Now()
-	updatedCount := 0
-	stationIgnoredCount := 0
 	var changedBuses []models.BusLocation
-	isFirstRun := len(udm.dataStore) == 0 // 🔧 첫 실행 감지
-
-	udm.logger.Infof("API1 데이터 업데이트 시작 - 수신된 버스: %d대", len(busLocations))
-	if isFirstRun {
-		udm.logger.Info("🆕 첫 실행 감지 - 모든 버스를 ES에 전송합니다")
-	}
+	isFirstRun := len(udm.dataStore) == 0
 
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
@@ -101,6 +97,7 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 			unified = &UnifiedBusData{
 				PlateNo:           plateNo,
 				RouteId:           bus.RouteId,
+				RouteNm:           bus.GetRouteIDString(),
 				LastUpdate:        now,
 				CurrentStationSeq: bus.StationSeq,
 				CurrentStationId:  bus.StationId,
@@ -113,15 +110,13 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 		newSeq := bus.StationSeq
 		currentSeq := unified.CurrentStationSeq
 
-		if currentSeq > 0 && newSeq < currentSeq {
-			udm.logger.Warnf("API1 정류장 정보 무시 - 차량번호: %s, 현재 seq: %d > 새 seq: %d",
-				plateNo, currentSeq, newSeq)
+		if currentSeq > 0 && newSeq < currentSeq && !isFirstRun {
 			shouldUpdateStationInfo = false
-			stationIgnoredCount++
 		} else if currentSeq > 0 && newSeq == currentSeq && !isFirstRun {
 			shouldUpdateStationInfo = false
 		}
 
+		// API1 데이터 업데이트 (API2 정보를 덮어쓰지 않음)
 		unified.API1Data = &API1BusInfo{
 			VehId:         bus.VehId,
 			StationId:     bus.StationId,
@@ -143,33 +138,49 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 		}
 
 		if shouldUpdateStationInfo {
-			unified.CurrentStationSeq = newSeq
-			unified.CurrentStationId = bus.StationId
+			// API2 정보가 없는 경우에만 API1 정보 사용
+			if unified.API2Data == nil || unified.API2Data.NodeNm == "" {
+				unified.CurrentStationSeq = newSeq
+				unified.CurrentStationId = bus.StationId
 
-			if udm.stationCache != nil {
-				if stationInfo, exists := udm.stationCache.GetStationInfo(bus.GetRouteIDString(), newSeq); exists {
-					unified.CurrentNodeNm = stationInfo.NodeNm
-					unified.CurrentNodeId = stationInfo.NodeId
+				if udm.stationCache != nil {
+					if stationInfo, exists := udm.stationCache.GetStationInfo(bus.GetRouteIDString(), newSeq); exists {
+						unified.CurrentNodeNm = stationInfo.NodeNm
+						unified.CurrentNodeId = stationInfo.NodeId
+					}
 				}
 			}
 
-			// 🔧 첫 실행이거나 정류장이 변경된 경우 ES 전송
-			if isFirstRun || udm.busTracker.IsStationChanged(plateNo, int64(newSeq)) {
-				finalData := udm.mergeDataForBus(unified)
-				if finalData != nil {
-					unified.FinalData = finalData
-					changedBuses = append(changedBuses, *finalData)
+			routeNm := unified.RouteNm
+			if routeNm == "" {
+				routeNm = bus.GetRouteIDString()
+			}
+
+			if isFirstRun {
+				changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(newSeq), routeNm, bus.TotalStations)
+				unified.TripNumber = tripNumber
+				if changed {
+					finalData := udm.mergeDataForBus(unified)
+					if finalData != nil {
+						unified.FinalData = finalData
+						changedBuses = append(changedBuses, *finalData)
+					}
+				}
+			} else {
+				changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(newSeq), routeNm, bus.TotalStations)
+				if changed {
+					unified.TripNumber = tripNumber
+					finalData := udm.mergeDataForBus(unified)
+					if finalData != nil {
+						unified.FinalData = finalData
+						changedBuses = append(changedBuses, *finalData)
+					}
 				}
 			}
 		} else {
 			udm.busTracker.UpdateLastSeenTime(plateNo)
 		}
-
-		updatedCount++
 	}
-
-	udm.logger.Infof("API1 데이터 업데이트 완료: 처리=%d대, 정류장변경=%d대, 정류장정보무시=%d대",
-		updatedCount, len(changedBuses), stationIgnoredCount)
 
 	if len(changedBuses) > 0 {
 		udm.sendChangedBusesToElasticsearch(changedBuses, "API1")
@@ -181,15 +192,8 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 	defer udm.mutex.Unlock()
 
 	now := time.Now()
-	updatedCount := 0
-	stationIgnoredCount := 0
 	var changedBuses []models.BusLocation
-	isFirstRun := len(udm.dataStore) == 0 // 🔧 첫 실행 감지
-
-	udm.logger.Infof("API2 데이터 업데이트 시작 - 수신된 버스: %d대", len(busLocations))
-	if isFirstRun {
-		udm.logger.Info("🆕 첫 실행 감지 - 모든 버스를 ES에 전송합니다")
-	}
+	isFirstRun := len(udm.dataStore) == 0
 
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
@@ -202,6 +206,7 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 			unified = &UnifiedBusData{
 				PlateNo:           plateNo,
 				RouteId:           bus.RouteId,
+				RouteNm:           bus.RouteNm, // API2의 RouteNm 사용
 				LastUpdate:        now,
 				CurrentStationSeq: bus.NodeOrd,
 				CurrentNodeNm:     bus.NodeNm,
@@ -215,22 +220,31 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 		newSeq := bus.NodeOrd
 		currentSeq := unified.CurrentStationSeq
 
-		if currentSeq > 0 && newSeq < currentSeq {
-			udm.logger.Warnf("API2 정류장 정보 무시 - 차량번호: %s, 현재 seq: %d > 새 seq: %d",
-				plateNo, currentSeq, newSeq)
+		if currentSeq > 0 && newSeq < currentSeq && !isFirstRun {
 			shouldUpdateStationInfo = false
-			stationIgnoredCount++
 		} else if currentSeq > 0 && newSeq == currentSeq && !isFirstRun {
 			shouldUpdateStationInfo = false
 		}
 
+		// API2 데이터 업데이트 (우선 정보)
 		unified.API2Data = &API2BusInfo{
 			NodeId:     bus.NodeId,
 			NodeNm:     bus.NodeNm,
 			NodeOrd:    bus.NodeOrd,
+			RouteNm:    bus.RouteNm,
 			GpsLati:    bus.GpsLati,
 			GpsLong:    bus.GpsLong,
 			UpdateTime: now,
+		}
+
+		// RouteNm 업데이트 (API2 우선)
+		if bus.RouteNm != "" {
+			unified.RouteNm = bus.RouteNm
+		}
+
+		// StationId 업데이트 (API2에서 올바르게 설정된 값 사용)
+		if bus.StationId > 0 {
+			unified.CurrentStationId = bus.StationId
 		}
 
 		unified.LastAPI2Update = now
@@ -241,27 +255,41 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 		}
 
 		if shouldUpdateStationInfo {
+			// API2 정보로 업데이트 (우선)
 			unified.CurrentStationSeq = newSeq
 			unified.CurrentNodeNm = bus.NodeNm
 			unified.CurrentNodeId = bus.NodeId
 
-			// 🔧 첫 실행이거나 정류장이 변경된 경우 ES 전송
-			if isFirstRun || udm.busTracker.IsStationChanged(plateNo, int64(newSeq)) {
-				finalData := udm.mergeDataForBus(unified)
-				if finalData != nil {
-					unified.FinalData = finalData
-					changedBuses = append(changedBuses, *finalData)
+			routeNm := unified.RouteNm
+			if routeNm == "" {
+				routeNm = bus.GetRouteIDString()
+			}
+
+			if isFirstRun {
+				changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(newSeq), routeNm, bus.TotalStations)
+				unified.TripNumber = tripNumber
+				if changed {
+					finalData := udm.mergeDataForBus(unified)
+					if finalData != nil {
+						unified.FinalData = finalData
+						changedBuses = append(changedBuses, *finalData)
+					}
+				}
+			} else {
+				changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(newSeq), routeNm, bus.TotalStations)
+				if changed {
+					unified.TripNumber = tripNumber
+					finalData := udm.mergeDataForBus(unified)
+					if finalData != nil {
+						unified.FinalData = finalData
+						changedBuses = append(changedBuses, *finalData)
+					}
 				}
 			}
 		} else {
 			udm.busTracker.UpdateLastSeenTime(plateNo)
 		}
-
-		updatedCount++
 	}
-
-	udm.logger.Infof("API2 데이터 업데이트 완료: 처리=%d대, 정류장변경=%d대, 정류장정보무시=%d대",
-		updatedCount, len(changedBuses), stationIgnoredCount)
 
 	if len(changedBuses) > 0 {
 		udm.sendChangedBusesToElasticsearch(changedBuses, "API2")
@@ -273,21 +301,15 @@ func (udm *UnifiedDataManager) sendChangedBusesToElasticsearch(changedBuses []mo
 		return
 	}
 
-	udm.logger.Infof("=== ES 전송 시작 (%s: %d대) ===", source, len(changedBuses))
-
 	for i, bus := range changedBuses {
-		udm.logger.Infof("ES 전송 [%d/%d] - 차량: %s, 정류장: %s (%s)",
-			i+1, len(changedBuses), bus.PlateNo, bus.NodeNm, bus.NodeId)
+		udm.logger.Infof("ES 전송 [%d/%d] - 차량: %s, 노선: %s, 정류장: %s (%s), 차수: %d",
+			i+1, len(changedBuses), bus.PlateNo, bus.RouteNm, bus.NodeNm, bus.NodeId, bus.TripNumber)
 	}
 
-	startTime := time.Now()
 	if err := udm.esService.BulkSendBusLocations(udm.indexName, changedBuses); err != nil {
 		udm.logger.Errorf("ES 전송 실패 (%s): %v", source, err)
 		return
 	}
-
-	duration := time.Since(startTime)
-	udm.logger.Infof("=== ES 전송 완료 (%s) - %d대, 소요시간: %v ===", source, len(changedBuses), duration)
 }
 
 func (udm *UnifiedDataManager) mergeDataForBus(unified *UnifiedBusData) *models.BusLocation {
@@ -298,39 +320,52 @@ func (udm *UnifiedDataManager) mergeDataForBus(unified *UnifiedBusData) *models.
 	final := &models.BusLocation{
 		PlateNo:    unified.PlateNo,
 		RouteId:    unified.RouteId,
+		RouteNm:    unified.RouteNm,          // API2 우선
+		StationId:  unified.CurrentStationId, // 통합된 StationId 사용
 		Timestamp:  time.Now().Format(time.RFC3339),
 		StationSeq: unified.CurrentStationSeq,
 		NodeNm:     unified.CurrentNodeNm,
 		NodeId:     unified.CurrentNodeId,
 		NodeOrd:    unified.CurrentStationSeq,
+		TripNumber: unified.TripNumber,
 	}
 
+	// API2 정보 우선 적용
+	if unified.API2Data != nil {
+		final.GpsLati = unified.API2Data.GpsLati
+		final.GpsLong = unified.API2Data.GpsLong
+		final.NodeNm = unified.API2Data.NodeNm
+		final.NodeId = unified.API2Data.NodeId
+		final.StationSeq = unified.API2Data.NodeOrd
+		final.NodeOrd = unified.API2Data.NodeOrd
+		final.RouteNm = unified.API2Data.RouteNm
+	}
+
+	// API1 정보는 API2에서 제공하지 않는 정보만 추가
 	if unified.API1Data != nil {
 		final.VehId = unified.API1Data.VehId
-		final.StationId = unified.API1Data.StationId
 		final.Crowded = unified.API1Data.Crowded
 		final.RemainSeatCnt = unified.API1Data.RemainSeatCnt
 		final.StateCd = unified.API1Data.StateCd
 		final.LowPlate = unified.API1Data.LowPlate
 		final.RouteTypeCd = unified.API1Data.RouteTypeCd
 		final.TaglessCd = unified.API1Data.TaglessCd
-	}
 
-	if unified.API2Data != nil {
-		final.GpsLati = unified.API2Data.GpsLati
-		final.GpsLong = unified.API2Data.GpsLong
-
-		if unified.API1Data == nil {
-			final.NodeNm = unified.API2Data.NodeNm
-			final.NodeId = unified.API2Data.NodeId
-			final.StationSeq = unified.API2Data.NodeOrd
-			final.NodeOrd = unified.API2Data.NodeOrd
+		// API2 정보가 없는 경우에만 API1의 StationId 사용
+		if unified.API2Data == nil {
+			final.StationId = unified.API1Data.StationId
+			final.StationSeq = unified.API1Data.StationSeq
+			final.NodeOrd = unified.API1Data.StationSeq
 		}
 	}
 
-	// 🔧 통합된 StationCacheService 사용하여 전체 정류소 개수 설정
+	// 전체 정류소 개수 설정
 	if udm.stationCache != nil {
-		final.TotalStations = udm.stationCache.GetRouteStationCount(final.GetRouteIDString())
+		routeKey := final.RouteNm
+		if routeKey == "" {
+			routeKey = final.GetRouteIDString()
+		}
+		final.TotalStations = udm.stationCache.GetRouteStationCount(routeKey)
 	}
 
 	return final
@@ -352,10 +387,6 @@ func (udm *UnifiedDataManager) CleanupOldData(maxAge time.Duration) int {
 	for _, plateNo := range removedPlates {
 		delete(udm.dataStore, plateNo)
 		udm.busTracker.RemoveFromTracking(plateNo)
-	}
-
-	if len(removedPlates) > 0 {
-		udm.logger.Infof("통합 데이터 정리 완료: %d개 버스 데이터 제거", len(removedPlates))
 	}
 
 	return len(removedPlates)

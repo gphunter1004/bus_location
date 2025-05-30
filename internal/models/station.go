@@ -89,14 +89,15 @@ type API1StationInfoItem struct {
 }
 
 // 공통 캐시 구조체
-// StationCache 정류소 캐시 정보
+// StationCache 정류소 캐시 정보 (StationId 기반)
 type StationCache struct {
-	NodeId  string  `json:"nodeId"`  // 정류장ID
-	NodeNm  string  `json:"nodeNm"`  // 정류장명
-	NodeNo  int     `json:"nodeNo"`  // 정류장번호 (숫자)
-	NodeOrd int     `json:"nodeOrd"` // 정류장순서
-	GPSLat  float64 `json:"gpsLat"`  // 위도 (숫자)
-	GPSLong float64 `json:"gpsLong"` // 경도 (숫자)
+	StationId int64   `json:"stationId"` // 정류장ID (숫자) - 캐시 키로 사용
+	NodeId    string  `json:"nodeId"`    // 정류장ID (문자열)
+	NodeNm    string  `json:"nodeNm"`    // 정류장명
+	NodeNo    int     `json:"nodeNo"`    // 정류장번호 (숫자)
+	NodeOrd   int     `json:"nodeOrd"`   // 정류장순서
+	GPSLat    float64 `json:"gpsLat"`    // 위도 (숫자)
+	GPSLong   float64 `json:"gpsLong"`   // 경도 (숫자)
 }
 
 // API2용 메서드들
@@ -120,13 +121,22 @@ func (sr *StationInfoResponse) GetStationInfoList() []StationInfoItem {
 
 // ToStationCache StationInfoItem을 StationCache로 변환 (API2)
 func (si *StationInfoItem) ToStationCache() StationCache {
+	// NodeId에서 GGB 제거하고 StationId 생성
+	var stationId int64
+	if si.NodeId != "" && len(si.NodeId) > 3 {
+		if id, err := ParseRouteID(si.NodeId[3:]); err == nil {
+			stationId = id
+		}
+	}
+
 	return StationCache{
-		NodeId:  si.NodeId,
-		NodeNm:  si.NodeNm,
-		NodeNo:  si.NodeNo, // 이미 int이므로 직접 대입
-		NodeOrd: si.NodeOrd,
-		GPSLat:  si.GPSLat,  // 이미 float64이므로 직접 대입
-		GPSLong: si.GPSLong, // 이미 float64이므로 직접 대입
+		StationId: stationId,  // NodeId에서 추출한 숫자
+		NodeId:    si.NodeId,  // 원본 NodeId
+		NodeNm:    si.NodeNm,  // 정류장명
+		NodeNo:    si.NodeNo,  // 정류장번호
+		NodeOrd:   si.NodeOrd, // 정류장순서
+		GPSLat:    si.GPSLat,  // 위도
+		GPSLong:   si.GPSLong, // 경도
 	}
 }
 
@@ -152,11 +162,12 @@ func (sr *API1StationInfoResponse) GetStationInfoList() []API1StationInfoItem {
 // ToStationCache API1StationInfoItem을 StationCache로 변환
 func (si *API1StationInfoItem) ToStationCache() StationCache {
 	return StationCache{
-		NodeId:  fmt.Sprintf("%d", si.StationId), // StationId를 문자열로 변환
-		NodeNm:  si.StationName,                  // 정류장명
-		NodeNo:  0,                               // API1에서는 제공하지 않음
-		NodeOrd: si.StationSeq,                   // 정류장순서
-		GPSLat:  si.Y,                            // Y좌표 (위도)
-		GPSLong: si.X,                            // X좌표 (경도)
+		StationId: si.StationId,                    // API1의 StationId 직접 사용
+		NodeId:    fmt.Sprintf("%d", si.StationId), // StationId를 문자열로 변환
+		NodeNm:    si.StationName,                  // 정류장명
+		NodeNo:    0,                               // API1에서는 제공하지 않음
+		NodeOrd:   si.StationSeq,                   // 정류장순서
+		GPSLat:    si.Y,                            // Y좌표 (위도)
+		GPSLong:   si.X,                            // X좌표 (경도)
 	}
 }
