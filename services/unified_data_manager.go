@@ -52,20 +52,21 @@ type UnifiedDataManager struct {
 	mutex        sync.RWMutex
 	logger       *utils.Logger
 	busTracker   *BusTracker
-	stationCache *UnifiedStationCacheService
+	stationCache *StationCacheService // 🔧 UnifiedStationCacheService → StationCacheService 변경
 	esService    *ElasticsearchService
 	indexName    string
 }
 
+// NewUnifiedDataManager 생성자 수정
 func NewUnifiedDataManager(logger *utils.Logger, busTracker *BusTracker,
-	unifiedStationCache *UnifiedStationCacheService,
+	stationCache *StationCacheService, // 🔧 파라미터 타입 변경
 	esService *ElasticsearchService, indexName string) *UnifiedDataManager {
 
 	return &UnifiedDataManager{
 		dataStore:    make(map[string]*UnifiedBusData),
 		logger:       logger,
 		busTracker:   busTracker,
-		stationCache: unifiedStationCache,
+		stationCache: stationCache,
 		esService:    esService,
 		indexName:    indexName,
 	}
@@ -138,6 +139,7 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 			unified.CurrentStationSeq = newSeq
 			unified.CurrentStationId = bus.StationId
 
+			// 🔧 통합된 StationCacheService 사용
 			if udm.stationCache != nil {
 				if stationInfo, exists := udm.stationCache.GetStationInfo(bus.GetRouteIDString(), newSeq); exists {
 					unified.CurrentNodeNm = stationInfo.NodeNm
@@ -314,6 +316,7 @@ func (udm *UnifiedDataManager) mergeDataForBus(unified *UnifiedBusData) *models.
 		}
 	}
 
+	// 🔧 통합된 StationCacheService 사용하여 전체 정류소 개수 설정
 	if udm.stationCache != nil {
 		final.TotalStations = udm.stationCache.GetRouteStationCount(final.GetRouteIDString())
 	}

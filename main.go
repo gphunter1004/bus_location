@@ -32,6 +32,8 @@ func main() {
 	}
 }
 
+// main.go의 runAPI1Mode 함수에서 캐시 로딩 부분을 다음과 같이 수정
+
 func runAPI1Mode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("=== API1 모드로 실행 ===")
 
@@ -58,12 +60,30 @@ func runAPI1Mode(cfg *config.Config, logger *utils.Logger) {
 	apiClient := services.NewAPI1Client(api1Config, logger)
 	esService := services.NewElasticsearchService(api1Config, logger)
 
-	logger.Info("API1 정류소 정보 캐시 로딩 시작")
-	if err := apiClient.LoadStationCache(cfg.API1Config.RouteIDs); err != nil {
-		logger.Warnf("정류소 캐시 로드 실패: %v", err)
+	// 🔧 캐시 로딩 디버깅 강화
+	logger.Info("🏗️ API1 정류소 정보 캐시 로딩 시작")
+	logger.Infof("📋 로딩할 Route IDs: %v", cfg.API1Config.RouteIDs)
+	logger.Infof("📊 Route IDs 개수: %d개", len(cfg.API1Config.RouteIDs))
+
+	if len(cfg.API1Config.RouteIDs) == 0 {
+		logger.Error("❌ API1Config.RouteIDs가 비어있습니다! .env 파일을 확인하세요")
+		logger.Error("💡 .env 파일에 API1_ROUTE_IDS=233000266 설정이 있는지 확인하세요")
 	} else {
-		routeCount, stationCount := apiClient.GetCacheStatistics()
-		logger.Infof("정류소 캐시 로드 완료 - 노선: %d개, 정류소: %d개", routeCount, stationCount)
+		logger.Info("✅ Route IDs가 설정되어 있음, 캐시 로딩 시작")
+
+		if err := apiClient.LoadStationCache(cfg.API1Config.RouteIDs); err != nil {
+			logger.Errorf("❌ 정류소 캐시 로드 실패: %v", err)
+			logger.Warnf("⚠️ 정류소 캐시 없이 계속 실행합니다 (정류소 이름 표시 안됨)")
+		} else {
+			routeCount, stationCount := apiClient.GetCacheStatistics()
+			logger.Infof("✅ 정류소 캐시 로드 완료 - 노선: %d개, 정류소: %d개", routeCount, stationCount)
+
+			// 각 노선별 정류소 개수 확인
+			for _, routeID := range cfg.API1Config.RouteIDs {
+				count := apiClient.GetRouteStationCount(routeID)
+				logger.Infof("   📍 노선 %s: %d개 정류소", routeID, count)
+			}
+		}
 	}
 
 	if err := esService.TestConnection(); err != nil {
@@ -116,6 +136,11 @@ func runAPI2Mode(cfg *config.Config, logger *utils.Logger) {
 	runSingleAPILoop(apiClient, esService, busTracker, api2Config, logger, cfg.API2Config.RouteIDs, cfg.API2Config.Interval)
 }
 
+// main.go 파일에서 runUnifiedMode 함수만 다음과 같이 교체하세요
+// (파일의 다른 부분은 그대로 두고 이 함수만 교체)
+
+// main.go의 runUnifiedMode 함수 수정 (통합 캐시 공유)
+
 func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("=== 통합 모드로 실행 (완전 즉시 처리 + 통합 캐시) ===")
 
@@ -131,8 +156,11 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	}
 	logger.Info("Elasticsearch 연결 테스트 성공")
 
+	// 🔧 통합 정류소 캐시를 일반 StationCacheService로 변경
 	logger.Info("=== 통합 정류소 캐시 초기화 시작 ===")
-	unifiedStationCache := services.NewUnifiedStationCacheService(cfg, logger)
+
+	// API2를 우선으로 사용하는 통합 캐시 생성
+	unifiedStationCache := services.NewStationCacheService(cfg, logger, "api2")
 
 	var api1RouteIDs, api2RouteIDs []string
 	if cfg.API1Config.Enabled {
@@ -146,7 +174,10 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Infof("- API1 노선: %v", api1RouteIDs)
 	logger.Infof("- API2 노선: %v", api2RouteIDs)
 
-	if err := unifiedStationCache.LoadUnifiedStationCache(api1RouteIDs, api2RouteIDs); err != nil {
+	// 🔧 모든 노선 ID를 하나의 배열로 합쳐서 로드
+	allRouteIDs := append(api1RouteIDs, api2RouteIDs...)
+
+	if err := unifiedStationCache.LoadStationCache(allRouteIDs); err != nil {
 		logger.Errorf("통합 정류소 캐시 로드 실패: %v", err)
 		logger.Warn("정류소 캐시 없이 실행하면 중복 데이터가 발생할 수 있습니다")
 	} else {
@@ -154,11 +185,12 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 		logger.Infof("✅ 통합 정류소 캐시 로드 완료 - 노선: %d개, 정류소: %d개", routeCount, stationCount)
 	}
 
+	// 🔧 중요: API 클라이언트에 통합 캐시를 전달하도록 수정
 	var api1Client *services.API1Client
 	var api2Client *services.API2Client
 
 	if cfg.API1Config.Enabled {
-		logger.Info("=== API1 클라이언트 초기화 ===")
+		logger.Info("=== API1 클라이언트 초기화 (통합 캐시 공유) ===")
 		api1Config := &config.Config{
 			ServiceKey: cfg.ServiceKey,
 			CityCode:   cfg.CityCode,
@@ -166,12 +198,14 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 			RouteIDs:   cfg.API1Config.RouteIDs,
 			APIType:    "api1",
 		}
-		api1Client = services.NewAPI1Client(api1Config, logger)
-		logger.Infof("API1 클라이언트 초기화 완료 - 노선 %d개", len(cfg.API1Config.RouteIDs))
+
+		// 🔧 API1 클라이언트를 통합 캐시와 함께 생성
+		api1Client = services.NewAPI1ClientWithSharedCache(api1Config, logger, unifiedStationCache)
+		logger.Infof("API1 클라이언트 초기화 완료 - 노선 %d개 (통합 캐시 공유)", len(cfg.API1Config.RouteIDs))
 	}
 
 	if cfg.API2Config.Enabled {
-		logger.Info("=== API2 클라이언트 초기화 ===")
+		logger.Info("=== API2 클라이언트 초기화 (통합 캐시 공유) ===")
 		api2Config := &config.Config{
 			ServiceKey: cfg.ServiceKey,
 			CityCode:   cfg.CityCode,
@@ -179,10 +213,13 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 			RouteIDs:   cfg.API2Config.RouteIDs,
 			APIType:    "api2",
 		}
-		api2Client = services.NewAPI2Client(api2Config, logger)
-		logger.Infof("API2 클라이언트 초기화 완료 - 노선 %d개", len(cfg.API2Config.RouteIDs))
+
+		// 🔧 API2 클라이언트를 통합 캐시와 함께 생성
+		api2Client = services.NewAPI2ClientWithSharedCache(api2Config, logger, unifiedStationCache)
+		logger.Infof("API2 클라이언트 초기화 완료 - 노선 %d개 (통합 캐시 공유)", len(cfg.API2Config.RouteIDs))
 	}
 
+	// 🔧 NewUnifiedDataManager 호출 시 StationCacheService 전달
 	dataManager := services.NewUnifiedDataManager(logger, busTracker, unifiedStationCache, esService, cfg.IndexName)
 	logger.Info("통합 데이터 매니저 초기화 완료 (통합 캐시 기반 + 즉시 처리)")
 
@@ -206,6 +243,7 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("- 데이터 처리: StationSeq/NodeOrd 통합 (같은 정류장은 같은 값)")
 	logger.Info("- 순차 검증: 뒤늦은 API의 역순 데이터는 정류장 정보 제외")
 	logger.Info("- 즉시 전송: 정류장 변경시 ES 즉시 전송")
+	logger.Info("- 캐시 공유: 모든 API 클라이언트가 동일한 통합 캐시 사용")
 	logger.Info("종료하려면 Ctrl+C를 누르세요")
 
 	<-sigChan
