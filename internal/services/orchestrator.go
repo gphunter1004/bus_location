@@ -16,7 +16,7 @@ type MultiAPIOrchestrator struct {
 	logger      *utils.Logger
 	api1Client  *api.API1Client
 	api2Client  *api.API2Client
-	dataManager *UnifiedDataManager
+	dataManager UnifiedDataManagerInterface
 
 	// 제어 관련
 	ctx       context.Context
@@ -29,7 +29,7 @@ type MultiAPIOrchestrator struct {
 // NewMultiAPIOrchestrator 새로운 다중 API 오케스트레이터 생성
 func NewMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
 	api1Client *api.API1Client, api2Client *api.API2Client,
-	dataManager *UnifiedDataManager) *MultiAPIOrchestrator {
+	dataManager UnifiedDataManagerInterface) *MultiAPIOrchestrator {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -176,11 +176,10 @@ func (mao *MultiAPIOrchestrator) processAPI2Call() {
 // processCleanup 정리 작업 처리
 func (mao *MultiAPIOrchestrator) processCleanup() {
 	// 통합 데이터 매니저에서 오래된 데이터 정리
-	mao.dataManager.CleanupOldData(mao.config.DataRetentionPeriod)
+	cleanedCount := mao.dataManager.CleanupOldData(mao.config.DataRetentionPeriod)
 
-	// BusTracker에서 미목격 버스 정리
-	if mao.dataManager != nil && mao.dataManager.busTracker != nil {
-		mao.dataManager.busTracker.CleanupMissingBuses(mao.config.BusTimeoutDuration, mao.logger)
+	if cleanedCount > 0 {
+		mao.logger.Infof("데이터 정리 완료 - 제거된 버스: %d대", cleanedCount)
 	}
 }
 
@@ -207,4 +206,12 @@ func (mao *MultiAPIOrchestrator) IsRunning() bool {
 	mao.mutex.RLock()
 	defer mao.mutex.RUnlock()
 	return mao.isRunning
+}
+
+// GetStatistics 통계 정보 반환
+func (mao *MultiAPIOrchestrator) GetStatistics() (totalBuses, api1Only, api2Only, both int) {
+	if mao.dataManager != nil {
+		return mao.dataManager.GetStatistics()
+	}
+	return 0, 0, 0, 0
 }

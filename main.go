@@ -1,3 +1,19 @@
+// NewMultiAPIOrchestrator 함수 시그니처도 인터페이스를 받도록 수정해야 합니다
+// internal/services/orchestrator.go의 NewMultiAPIOrchestrator 함수를 다음과 같이 수정:
+
+//	type MultiAPIOrchestrator struct {
+//		config      *config.Config
+//		logger      *utils.Logger
+//		api1Client  *api.API1Client
+//		api2Client  *api.API2Client
+//		dataManager UnifiedDataManagerInterface  // 인터페이스로 변경
+//
+//		// 제어 관련
+//		ctx       context.Context
+//		cancel    context.CancelFunc
+//		wg        sync.WaitGroup
+//		isRunning bool
+//		mutex     sync.RWMutex
 package main
 
 import (
@@ -8,7 +24,6 @@ import (
 	"time"
 
 	"bus-tracker/config"
-	"bus-tracker/internal/models"
 	"bus-tracker/internal/services"
 	"bus-tracker/internal/services/api"
 	"bus-tracker/internal/services/cache"
@@ -55,9 +70,16 @@ func runAPI1Mode(cfg *config.Config, logger *utils.Logger) {
 		BusTimeoutDuration:    cfg.BusTimeoutDuration,
 	}
 
-	busTracker := tracker.NewBusTracker()
-	apiClient := api.NewAPI1Client(api1Config, logger)
 	esService := storage.NewElasticsearchService(api1Config, logger)
+	if err := esService.TestConnection(); err != nil {
+		log.Fatalf("Elasticsearch 연결 실패: %v", err)
+	}
+
+	// 중복 체크 서비스 생성
+	duplicateChecker := storage.NewElasticsearchDuplicateChecker(esService, logger, cfg.IndexName)
+	busTracker := tracker.NewBusTrackerWithDuplicateCheck(duplicateChecker)
+
+	apiClient := api.NewAPI1Client(api1Config, logger)
 
 	if len(cfg.API1Config.RouteIDs) == 0 {
 		logger.Error("API1Config.RouteIDs가 비어있습니다")
@@ -65,10 +87,6 @@ func runAPI1Mode(cfg *config.Config, logger *utils.Logger) {
 		if err := apiClient.LoadStationCache(cfg.API1Config.RouteIDs); err != nil {
 			logger.Errorf("정류소 캐시 로드 실패: %v", err)
 		}
-	}
-
-	if err := esService.TestConnection(); err != nil {
-		log.Fatalf("Elasticsearch 연결 실패: %v", err)
 	}
 
 	runSingleAPILoop(apiClient, esService, busTracker, api1Config, logger, cfg.API1Config.RouteIDs, cfg.API1Config.Interval)
@@ -94,16 +112,19 @@ func runAPI2Mode(cfg *config.Config, logger *utils.Logger) {
 		BusTimeoutDuration:    cfg.BusTimeoutDuration,
 	}
 
-	busTracker := tracker.NewBusTracker()
-	apiClient := api.NewAPI2Client(api2Config, logger)
 	esService := storage.NewElasticsearchService(api2Config, logger)
+	if err := esService.TestConnection(); err != nil {
+		log.Fatalf("Elasticsearch 연결 실패: %v", err)
+	}
+
+	// 중복 체크 서비스 생성
+	duplicateChecker := storage.NewElasticsearchDuplicateChecker(esService, logger, cfg.IndexName)
+	busTracker := tracker.NewBusTrackerWithDuplicateCheck(duplicateChecker)
+
+	apiClient := api.NewAPI2Client(api2Config, logger)
 
 	if err := apiClient.LoadStationCache(cfg.API2Config.RouteIDs); err != nil {
 		logger.Errorf("정류소 캐시 로드 실패: %v", err)
-	}
-
-	if err := esService.TestConnection(); err != nil {
-		log.Fatalf("Elasticsearch 연결 실패: %v", err)
 	}
 
 	runSingleAPILoop(apiClient, esService, busTracker, api2Config, logger, cfg.API2Config.RouteIDs, cfg.API2Config.Interval)
@@ -119,12 +140,14 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Infof("API1 BaseURL: %s", cfg.API1Config.BaseURL)
 	logger.Infof("API2 BaseURL: %s", cfg.API2Config.BaseURL)
 
-	busTracker := tracker.NewBusTracker()
 	esService := storage.NewElasticsearchService(cfg, logger)
-
 	if err := esService.TestConnection(); err != nil {
 		log.Fatalf("Elasticsearch 연결 실패: %v", err)
 	}
+
+	// 중복 체크 서비스 생성
+	duplicateChecker := storage.NewElasticsearchDuplicateChecker(esService, logger, cfg.IndexName)
+	busTracker := tracker.NewBusTrackerWithDuplicateCheck(duplicateChecker)
 
 	// API2 우선 통합 캐시 생성
 	unifiedStationCache := cache.NewStationCacheService(cfg, logger, "api2")
@@ -171,7 +194,11 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 		logger.Infof("API2 클라이언트 생성 완료")
 	}
 
-	dataManager := services.NewUnifiedDataManager(logger, busTracker, unifiedStationCache, esService, cfg.IndexName)
+	// 중복 체크 기능이 포함된 통합 데이터 매니저 생성
+	var dataManager services.UnifiedDataManagerInterface
+	dataManager = services.NewUnifiedDataManagerWithDuplicateCheck(
+		logger, busTracker, unifiedStationCache, esService, duplicateChecker, cfg.IndexName)
+
 	orchestrator := services.NewMultiAPIOrchestrator(cfg, logger, api1Client, api2Client, dataManager)
 
 	// 운영시간 시작 시 운행 차수 카운터 초기화
@@ -196,7 +223,7 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 }
 
 func runSingleAPILoop(apiClient api.BusAPIClient, esService *storage.ElasticsearchService,
-	busTracker *tracker.BusTracker, cfg *config.Config, logger *utils.Logger,
+	busTracker *tracker.BusTrackerWithDuplicateCheck, cfg *config.Config, logger *utils.Logger,
 	routeIDs []string, interval time.Duration) {
 
 	ticker := time.NewTicker(interval)
@@ -234,7 +261,7 @@ func runSingleAPILoop(apiClient api.BusAPIClient, esService *storage.Elasticsear
 }
 
 func processSingleAPICall(apiClient api.BusAPIClient, esService *storage.ElasticsearchService,
-	busTracker *tracker.BusTracker, logger *utils.Logger, routeIDs []string, indexName string) {
+	busTracker *tracker.BusTrackerWithDuplicateCheck, logger *utils.Logger, routeIDs []string, indexName string) {
 
 	allBusLocations, err := apiClient.FetchAllBusLocations(routeIDs)
 	if err != nil {
@@ -246,32 +273,8 @@ func processSingleAPICall(apiClient api.BusAPIClient, esService *storage.Elastic
 		return
 	}
 
-	// TripNumber 설정을 위해 각 버스에 대해 개별 처리
-	var changedBuses []models.BusLocation
-	for _, bus := range allBusLocations {
-		// StationId를 위치 정보로 사용
-		currentPosition := bus.StationId
-		if currentPosition <= 0 {
-			// StationId가 없으면 NodeOrd 사용
-			currentPosition = int64(bus.NodeOrd)
-		}
-
-		routeNm := bus.GetRouteIDString()
-
-		// 종료 조건 체크
-		if busTracker.ShouldTerminateBus(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
-			busTracker.TerminateBusTracking(bus.PlateNo, "종점 도달", logger)
-			bus.TripNumber = busTracker.GetTripNumber(bus.PlateNo)
-			changedBuses = append(changedBuses, bus)
-			continue
-		}
-
-		// 정류장 변경 체크
-		if changed, tripNumber := busTracker.IsStationChanged(bus.PlateNo, currentPosition, routeNm, bus.TotalStations); changed {
-			bus.TripNumber = tripNumber
-			changedBuses = append(changedBuses, bus)
-		}
-	}
+	// 중복 체크가 포함된 필터링 사용
+	changedBuses := busTracker.FilterChangedStationsWithDuplicateCheck(allBusLocations, logger)
 
 	if len(changedBuses) == 0 {
 		return
