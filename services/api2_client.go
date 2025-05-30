@@ -145,6 +145,7 @@ func (ac *API2Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 }
 
 // parseResponse API2 응답 파싱
+// parseResponse API2 응답 파싱 (검증 강화)
 func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLocation, error) {
 	var apiResp models.API2Response
 	if err := json.Unmarshal(body, &apiResp); err != nil {
@@ -163,9 +164,41 @@ func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLo
 	ac.logger.Infof("✅ API2 응답 성공 (routeId: %s): %s, 버스 데이터 수: %d",
 		routeID, apiResp.Response.Header.ResultMsg, len(busItems))
 
+	// 🔧 데이터 품질 검증
+	validItems := []models.API2BusLocationItem{}
+	invalidCount := 0
+
+	for _, item := range busItems {
+		// 필수 필드 검증
+		if item.VehicleNo == "" {
+			ac.logger.Warnf("⚠️ API2 데이터 무시 - 차량번호 없음: %+v", item)
+			invalidCount++
+			continue
+		}
+
+		if item.NodeOrd <= 0 && item.NodeId == "" {
+			ac.logger.Warnf("⚠️ API2 데이터 무시 - 정류장 정보 없음: 차량번호=%s", item.VehicleNo)
+			invalidCount++
+			continue
+		}
+
+		// GPS 좌표 유효성 검증
+		if item.GpsLati < 33.0 || item.GpsLati > 38.0 || item.GpsLong < 124.0 || item.GpsLong > 132.0 {
+			ac.logger.Warnf("⚠️ API2 GPS 좌표 이상 - 차량번호: %s, GPS: (%.6f, %.6f)",
+				item.VehicleNo, item.GpsLati, item.GpsLong)
+			// GPS 좌표가 이상해도 데이터는 유지 (정류장 정보가 있으면)
+		}
+
+		validItems = append(validItems, item)
+	}
+
+	if invalidCount > 0 {
+		ac.logger.Warnf("⚠️ API2 데이터 품질 검증 - 유효: %d개, 무효: %d개", len(validItems), invalidCount)
+	}
+
 	// API2BusLocationItem을 BusLocation으로 변환
 	var busLocations []models.BusLocation
-	for _, item := range busItems {
+	for _, item := range validItems {
 		busLocation := item.ConvertToBusLocation()
 
 		// 정류소 정보 보강 (동일한 routeID 사용 - 중요!)

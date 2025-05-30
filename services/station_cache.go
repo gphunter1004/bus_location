@@ -40,11 +40,15 @@ func NewStationCacheService(cfg *config.Config, logger *utils.Logger, apiType st
 }
 
 // LoadStationCache 모든 노선의 정류소 정보를 미리 로드
+// services/station_cache.go의 LoadStationCache 메서드 수정
+
+// LoadStationCache 모든 노선의 정류소 정보를 미리 로드 (중복 제거)
 func (scs *StationCacheService) LoadStationCache(routeIDs []string) error {
 	scs.logger.Infof("🚀 정류소 정보 캐시 로딩 시작 - 총 %d개 노선 (%s)", len(routeIDs), scs.apiType)
 	scs.logger.Infof("📋 입력된 Route IDs: %v", routeIDs)
 
-	// Route ID 형식 사전 검증 및 변환 정보 출력
+	// 🔧 중복 제거: 통합 키 기준으로 고유한 노선만 처리
+	uniqueRoutes := make(map[string]string) // unifiedKey -> originalRouteID
 	for i, routeID := range routeIDs {
 		if err := scs.routeConverter.ValidateRouteID(routeID, scs.apiType); err != nil {
 			scs.logger.Errorf("❌ Route ID 형식 오류 [%d]: %v", i+1, err)
@@ -52,20 +56,46 @@ func (scs *StationCacheService) LoadStationCache(routeIDs []string) error {
 		}
 
 		_, unifiedKey := scs.routeConverter.GetOriginalAndUnified(routeID)
+
+		// 이미 같은 통합 키가 있는지 확인
+		if existingRoute, exists := uniqueRoutes[unifiedKey]; exists {
+			scs.logger.Infof("🔄 Route ID 중복 제거 [%d]: '%s' → 통합키: '%s' (이미 '%s'로 처리됨)",
+				i+1, routeID, unifiedKey, existingRoute)
+			continue
+		}
+
+		uniqueRoutes[unifiedKey] = routeID
 		scs.logger.Infof("🔄 Route ID 변환 [%d]: '%s' → 통합키: '%s'", i+1, routeID, unifiedKey)
 	}
 
+	// 고유한 노선들로만 처리
 	var wg sync.WaitGroup
-	errorChan := make(chan error, len(routeIDs))
+	errorChan := make(chan error, len(uniqueRoutes))
 	successCount := 0
 	var successMutex sync.Mutex
 
-	for i, routeID := range routeIDs {
+	i := 0
+	for unifiedKey, routeID := range uniqueRoutes {
+		i++
 		wg.Add(1)
-		go func(index int, id string) {
+		go func(index int, key, id string) {
 			defer wg.Done()
 
-			scs.logger.Infof("🔄 [%d/%d] 노선 %s 캐시 로딩 시작", index+1, len(routeIDs), id)
+			scs.logger.Infof("🔄 [%d/%d] 노선 %s 캐시 로딩 시작", index, len(uniqueRoutes), id)
+
+			// 🔧 이미 캐시가 있는지 확인
+			scs.mutex.RLock()
+			_, cacheExists := scs.stationCache[key]
+			scs.mutex.RUnlock()
+
+			if cacheExists {
+				scs.logger.Infof("✅ [%d/%d] 노선 %s 캐시 이미 존재함 (통합키: %s)",
+					index, len(uniqueRoutes), id, key)
+				successMutex.Lock()
+				successCount++
+				successMutex.Unlock()
+				return
+			}
 
 			// 캐시 로딩 시도 (최대 3회 재시도)
 			var err error
@@ -74,16 +104,17 @@ func (scs *StationCacheService) LoadStationCache(routeIDs []string) error {
 					successMutex.Lock()
 					successCount++
 					successMutex.Unlock()
-					scs.logger.Infof("✅ [%d/%d] 노선 %s 캐시 로딩 성공", index+1, len(routeIDs), id)
+					scs.logger.Infof("✅ [%d/%d] 노선 %s 캐시 로딩 성공", index, len(uniqueRoutes), id)
 					return
 				}
-				scs.logger.Warnf("⚠️ [%d/%d] 노선 %s 캐시 로딩 실패 (시도 %d/3): %v", index+1, len(routeIDs), id, attempt, err)
+				scs.logger.Warnf("⚠️ [%d/%d] 노선 %s 캐시 로딩 실패 (시도 %d/3): %v",
+					index, len(uniqueRoutes), id, attempt, err)
 				if attempt < 3 {
 					time.Sleep(time.Duration(attempt) * time.Second)
 				}
 			}
 			errorChan <- fmt.Errorf("노선 %s 정류소 정보 로드 최종 실패: %v", id, err)
-		}(i, routeID)
+		}(i, unifiedKey, routeID)
 	}
 
 	// 모든 고루틴 완료 대기
@@ -327,6 +358,12 @@ func (scs *StationCacheService) GetRouteStationCount(routeID string) int {
 }
 
 // EnrichBusLocationWithStationInfo 버스 위치 정보에 정류소 정보 보강
+// services/station_cache.go의 EnrichBusLocationWithStationInfo 메서드 수정
+
+// EnrichBusLocationWithStationInfo 버스 위치 정보에 정류소 정보 보강
+// services/station_cache.go의 EnrichBusLocationWithStationInfo 메서드 수정
+
+// EnrichBusLocationWithStationInfo 버스 위치 정보에 정류소 정보 보강
 func (scs *StationCacheService) EnrichBusLocationWithStationInfo(busLocation *models.BusLocation, routeID string) {
 	var lookupKey int
 	unifiedRouteKey := scs.routeConverter.ToUnifiedKey(routeID)
@@ -344,19 +381,36 @@ func (scs *StationCacheService) EnrichBusLocationWithStationInfo(busLocation *mo
 		scs.logger.Infof("🔍 API1 정류소 캐시 조회 - 원본노선: '%s', 통합키: '%s', StationSeq: %d", routeID, unifiedRouteKey, lookupKey)
 	} else {
 		lookupKey = busLocation.NodeOrd
+
+		// 🔧 NodeOrd가 0인 경우 특별 처리
 		if lookupKey <= 0 {
-			scs.logger.Warnf("⚠️ API2 정류소 순서가 유효하지 않음 - 노선: %s, NodeOrd: %d, 차량번호: %s",
-				routeID, busLocation.NodeOrd, busLocation.PlateNo)
-			// 전체 정류소 개수만이라도 설정
-			busLocation.TotalStations = scs.GetRouteStationCount(routeID)
-			return
+			// StationSeq를 대신 사용 시도
+			if busLocation.StationSeq > 0 {
+				lookupKey = busLocation.StationSeq
+				scs.logger.Infof("⚡ API2 NodeOrd=0 대체 - 차량번호: %s, StationSeq: %d 사용",
+					busLocation.PlateNo, lookupKey)
+			} else {
+				scs.logger.Warnf("⚠️ API2 정류소 순서가 유효하지 않음 - 노선: %s, NodeOrd: %d, StationSeq: %d, 차량번호: %s",
+					routeID, busLocation.NodeOrd, busLocation.StationSeq, busLocation.PlateNo)
+				// 전체 정류소 개수만이라도 설정
+				busLocation.TotalStations = scs.GetRouteStationCount(routeID)
+				return
+			}
 		}
 
 		// API2에서 이미 정류소 정보가 있는지 확인
 		if busLocation.NodeNm != "" && busLocation.NodeId != "" {
 			busLocation.TotalStations = scs.GetRouteStationCount(routeID)
+
+			// 🔧 NodeOrd 보정 (lookupKey가 대체값인 경우)
+			if busLocation.NodeOrd <= 0 {
+				busLocation.NodeOrd = lookupKey
+				scs.logger.Infof("🔧 NodeOrd 보정 완료 - 차량번호: %s, NodeOrd: %d",
+					busLocation.PlateNo, lookupKey)
+			}
+
 			scs.logger.Infof("ℹ️ 정류소 정보 이미 존재 - 통합키: %s, 순서: %d/%d → %s (%s) [캐시 불필요]",
-				unifiedRouteKey, busLocation.NodeOrd, busLocation.TotalStations, busLocation.NodeNm, busLocation.NodeId)
+				unifiedRouteKey, lookupKey, busLocation.TotalStations, busLocation.NodeNm, busLocation.NodeId)
 			return
 		}
 		scs.logger.Infof("🔍 API2 정류소 캐시 조회 - 원본노선: '%s', 통합키: '%s', NodeOrd: %d", routeID, unifiedRouteKey, lookupKey)
@@ -372,6 +426,11 @@ func (scs *StationCacheService) EnrichBusLocationWithStationInfo(busLocation *mo
 		// API별 순서 필드 설정
 		if scs.apiType == "api1" {
 			busLocation.NodeOrd = stationInfo.NodeOrd
+		} else {
+			// 🔧 API2에서 NodeOrd가 0이었다면 보정
+			if busLocation.NodeOrd <= 0 {
+				busLocation.NodeOrd = lookupKey
+			}
 		}
 
 		// StationId 설정

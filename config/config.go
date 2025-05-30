@@ -104,14 +104,14 @@ func LoadConfig() *Config {
 		OperatingEndHour:     getIntEnv("OPERATING_END_HOUR", 1),
 		OperatingEndMinute:   getIntEnv("OPERATING_END_MINUTE", 0),
 
-		// 버스 트래킹 설정
-		BusCleanupInterval: getDuration("BUS_CLEANUP_INTERVAL_MINUTES", 5) * time.Minute,
-		BusTimeoutDuration: getDuration("BUS_TIMEOUT_MINUTES", 60) * time.Minute,
+		// 버스 트래킹 설정 (🔧 수정된 부분)
+		BusCleanupInterval: getDurationMinutes("BUS_CLEANUP_INTERVAL_MINUTES", 5), // 5분
+		BusTimeoutDuration: getDurationMinutes("BUS_TIMEOUT_MINUTES", 60),         // 60분 (1시간)
 
-		// 통합 처리 설정
-		DataMergeInterval:   getDuration("DATA_MERGE_INTERVAL_SECONDS", 10),
-		ESBatchInterval:     getDuration("ES_BATCH_INTERVAL_SECONDS", 30),
-		DataRetentionPeriod: getDuration("DATA_RETENTION_MINUTES", 5) * time.Minute,
+		// 통합 처리 설정 (🔧 수정된 부분)
+		DataMergeInterval:   getDuration("DATA_MERGE_INTERVAL_SECONDS", 10),  // 10초
+		ESBatchInterval:     getDuration("ES_BATCH_INTERVAL_SECONDS", 30),    // 30초
+		DataRetentionPeriod: getDurationMinutes("DATA_RETENTION_MINUTES", 5), // 5분
 
 		// API1 설정 (경기도 버스위치정보 v2)
 		API1Config: APIConfig{
@@ -332,6 +332,16 @@ func getDuration(key string, defaultSeconds int) time.Duration {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d초를 사용합니다.", key, defaultSeconds)
 	}
 	return time.Duration(defaultSeconds) * time.Second
+}
+
+func getDurationMinutes(key string, defaultMinutes int) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if minutes, err := strconv.Atoi(value); err == nil {
+			return time.Duration(minutes) * time.Minute
+		}
+		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d분을 사용합니다.", key, defaultMinutes)
+	}
+	return time.Duration(defaultMinutes) * time.Minute
 }
 
 // IsOperatingTime 현재 시간이 운영 시간인지 확인

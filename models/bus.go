@@ -180,6 +180,9 @@ func (ar *API2Response) GetBusLocationItemList() []API2BusLocationItem {
 }
 
 // ConvertToBusLocation API2BusLocationItem을 BusLocation으로 변환
+// models/bus.go의 ConvertToBusLocation 메서드 수정
+
+// ConvertToBusLocation API2BusLocationItem을 BusLocation으로 변환
 func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 	// RouteId를 routenm에서 가져오기 (int를 int64로 변환)
 	routeId := int64(item.RouteNm)
@@ -193,16 +196,32 @@ func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 		}
 	}
 
+	// 🔧 NodeOrd가 0인 경우 기본값 설정 로직 추가
+	nodeOrd := item.NodeOrd
+	if nodeOrd == 0 {
+		// NodeId에서 순서 추출 시도
+		if item.NodeId != "" {
+			// 간단한 해시 기반 순서 생성 (임시 해결책)
+			hash := 0
+			for _, c := range item.NodeId {
+				hash = hash*31 + int(c)
+			}
+			nodeOrd = (hash % 60) + 1 // 1-60 범위로 제한
+		} else {
+			nodeOrd = 1 // 기본값
+		}
+	}
+
 	return BusLocation{
 		// API2 실제 데이터 매핑
 		PlateNo:    item.VehicleNo, // 차량번호
 		RouteId:    routeId,        // 노선번호
 		StationId:  stationId,      // 정류장ID
-		StationSeq: item.NodeOrd,   // 정류장순서
+		StationSeq: nodeOrd,        // 🔧 수정된 NodeOrd 사용
 		// API2 전용 필드 (API 응답에 이미 포함된 정보 사용)
 		NodeId:  item.NodeId,  // 정류장ID (API 응답에서 가져옴)
 		NodeNm:  item.NodeNm,  // 정류장명 (API 응답에서 가져옴)
-		NodeOrd: item.NodeOrd, // 정류장순서
+		NodeOrd: nodeOrd,      // 🔧 수정된 NodeOrd 사용
 		GpsLati: item.GpsLati, // 위도
 		GpsLong: item.GpsLong, // 경도
 		// 기본값 설정 (API2에서 제공되지 않는 필드)

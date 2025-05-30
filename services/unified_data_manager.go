@@ -80,8 +80,12 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 	updatedCount := 0
 	stationIgnoredCount := 0
 	var changedBuses []models.BusLocation
+	isFirstRun := len(udm.dataStore) == 0 // 🔧 첫 실행 감지
 
 	udm.logger.Infof("API1 데이터 업데이트 시작 - 수신된 버스: %d대", len(busLocations))
+	if isFirstRun {
+		udm.logger.Info("🆕 첫 실행 감지 - 모든 버스를 ES에 전송합니다")
+	}
 
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
@@ -111,7 +115,7 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 				plateNo, currentSeq, newSeq)
 			shouldUpdateStationInfo = false
 			stationIgnoredCount++
-		} else if currentSeq > 0 && newSeq == currentSeq {
+		} else if currentSeq > 0 && newSeq == currentSeq && !isFirstRun {
 			shouldUpdateStationInfo = false
 		}
 
@@ -139,7 +143,6 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 			unified.CurrentStationSeq = newSeq
 			unified.CurrentStationId = bus.StationId
 
-			// 🔧 통합된 StationCacheService 사용
 			if udm.stationCache != nil {
 				if stationInfo, exists := udm.stationCache.GetStationInfo(bus.GetRouteIDString(), newSeq); exists {
 					unified.CurrentNodeNm = stationInfo.NodeNm
@@ -147,7 +150,8 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 				}
 			}
 
-			if udm.busTracker.IsStationChanged(plateNo, int64(newSeq)) {
+			// 🔧 첫 실행이거나 정류장이 변경된 경우 ES 전송
+			if isFirstRun || udm.busTracker.IsStationChanged(plateNo, int64(newSeq)) {
 				finalData := udm.mergeDataForBus(unified)
 				if finalData != nil {
 					unified.FinalData = finalData
@@ -177,8 +181,12 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 	updatedCount := 0
 	stationIgnoredCount := 0
 	var changedBuses []models.BusLocation
+	isFirstRun := len(udm.dataStore) == 0 // 🔧 첫 실행 감지
 
 	udm.logger.Infof("API2 데이터 업데이트 시작 - 수신된 버스: %d대", len(busLocations))
+	if isFirstRun {
+		udm.logger.Info("🆕 첫 실행 감지 - 모든 버스를 ES에 전송합니다")
+	}
 
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
@@ -209,7 +217,7 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 				plateNo, currentSeq, newSeq)
 			shouldUpdateStationInfo = false
 			stationIgnoredCount++
-		} else if currentSeq > 0 && newSeq == currentSeq {
+		} else if currentSeq > 0 && newSeq == currentSeq && !isFirstRun {
 			shouldUpdateStationInfo = false
 		}
 
@@ -234,7 +242,8 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 			unified.CurrentNodeNm = bus.NodeNm
 			unified.CurrentNodeId = bus.NodeId
 
-			if udm.busTracker.IsStationChanged(plateNo, int64(newSeq)) {
+			// 🔧 첫 실행이거나 정류장이 변경된 경우 ES 전송
+			if isFirstRun || udm.busTracker.IsStationChanged(plateNo, int64(newSeq)) {
 				finalData := udm.mergeDataForBus(unified)
 				if finalData != nil {
 					unified.FinalData = finalData
