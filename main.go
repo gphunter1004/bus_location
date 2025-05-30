@@ -414,7 +414,6 @@ func printUnifiedSystemStatus(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("처리 방식: API 데이터 수신 → 순차검증 → 즉시 통합 → 변경 감지 → 즉시 ES 전송")
 	logger.Info("캐시 전략: API2 우선 (GPS+상세정보), API1 보조")
 	logger.Info("순차 검증: 역순 데이터의 정류장 정보 제외, 버스 정보만 업데이트")
-	logger.Info("배치 처리: 없음 (모든 처리가 즉시 수행됨)")
 
 	logger.Info("===============================")
 }

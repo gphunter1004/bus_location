@@ -53,7 +53,6 @@ type Config struct {
 
 	// 통합 처리 설정
 	DataMergeInterval   time.Duration `json:"dataMergeInterval"`   // 데이터 통합 주기 (기본: 10초)
-	ESBatchInterval     time.Duration `json:"esBatchInterval"`     // ES 전송 주기 (기본: 30초)
 	DataRetentionPeriod time.Duration `json:"dataRetentionPeriod"` // 메모리 데이터 보존 기간 (기본: 5분)
 
 	// API별 설정
@@ -110,7 +109,6 @@ func LoadConfig() *Config {
 
 		// 통합 처리 설정 (🔧 수정된 부분)
 		DataMergeInterval:   getDuration("DATA_MERGE_INTERVAL_SECONDS", 10),  // 10초
-		ESBatchInterval:     getDuration("ES_BATCH_INTERVAL_SECONDS", 30),    // 30초
 		DataRetentionPeriod: getDurationMinutes("DATA_RETENTION_MINUTES", 5), // 5분
 
 		// API1 설정 (경기도 버스위치정보 v2)
@@ -412,7 +410,6 @@ func (c *Config) PrintConfig() {
 		// 통합 모드 설정 출력
 		log.Printf("=== 통합 모드 설정 ===")
 		log.Printf("데이터 통합 주기: %v", c.DataMergeInterval)
-		log.Printf("ES 배치 주기: %v", c.ESBatchInterval)
 		log.Printf("데이터 보존 기간: %v", c.DataRetentionPeriod)
 
 		// API1 설정
