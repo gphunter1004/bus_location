@@ -291,7 +291,7 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) mergeDataForBus(unified *Unifie
 	return final
 }
 
-// CleanupOldData 오래된 데이터 정리
+// 🔧 간소화된 정리 작업 - 새로운 종료 조건 적용
 func (udm *UnifiedDataManagerWithDuplicateCheck) CleanupOldData(maxAge time.Duration) int {
 	udm.mutex.Lock()
 	defer udm.mutex.Unlock()
@@ -310,10 +310,11 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) CleanupOldData(maxAge time.Dura
 		udm.busTracker.RemoveFromTracking(plateNo)
 	}
 
-	// BusTracker에서 미목격 버스 정리 (60분 타임아웃 사용)
-	cleanedBuses := udm.busTracker.CleanupMissingBuses(60*time.Minute, udm.logger)
+	// 🔧 새로운 종료 조건에 따른 버스 정리
+	// BusTracker에서 config 기반으로 미목격 버스 정리
+	cleanedBuses := udm.busTracker.CleanupMissingBuses(udm.logger)
 	if cleanedBuses > 0 {
-		udm.logger.Infof("미목격 버스 정리 완료 - %d대", cleanedBuses)
+		udm.logger.Infof("버스 트래킹 종료 정리 완료 - %d대", cleanedBuses)
 	}
 
 	return len(removedPlates)

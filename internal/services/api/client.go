@@ -1,4 +1,4 @@
-// internal/services/api/client.go
+// internal/services/api/client.go - 통합 모드 전용
 package api
 
 import (
@@ -26,16 +26,6 @@ type BusAPIClient interface {
 
 	// GetRouteStationCount 특정 노선의 전체 정류소 개수 반환
 	GetRouteStationCount(routeID string) int
-}
-
-// NewBusAPIClient API 타입에 따라 적절한 클라이언트 생성 (팩토리 패턴)
-func NewBusAPIClient(cfg *config.Config, logger *utils.Logger) BusAPIClient {
-	switch cfg.APIType {
-	case "api2":
-		return NewAPI2Client(cfg, logger)
-	default:
-		return NewAPI1Client(cfg, logger)
-	}
 }
 
 // APIClientBase 공통 베이스 구조체 (공통 필드와 메서드)

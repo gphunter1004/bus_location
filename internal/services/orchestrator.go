@@ -54,19 +54,19 @@ func (mao *MultiAPIOrchestrator) Start() error {
 		return nil
 	}
 
-	// API1 워커 시작 (활성화된 경우)
-	if mao.config.API1Config.Enabled && mao.api1Client != nil {
+	// API1 워커 시작 (노선이 설정된 경우)
+	if len(mao.config.API1Config.RouteIDs) > 0 && mao.api1Client != nil {
 		mao.wg.Add(1)
 		go mao.runAPI1Worker()
 	}
 
-	// API2 워커 시작 (활성화된 경우)
-	if mao.config.API2Config.Enabled && mao.api2Client != nil {
+	// API2 워커 시작 (노선이 설정된 경우)
+	if len(mao.config.API2Config.RouteIDs) > 0 && mao.api2Client != nil {
 		mao.wg.Add(1)
 		go mao.runAPI2Worker()
 	}
 
-	// 정리 워커 시작
+	// 🔧 새로운 정리 워커 시작 (간소화된 조건)
 	mao.wg.Add(1)
 	go mao.runCleanupWorker()
 
@@ -126,7 +126,7 @@ func (mao *MultiAPIOrchestrator) runAPI2Worker() {
 	}
 }
 
-// runCleanupWorker 정리 워커 실행
+// 🔧 간소화된 정리 워커
 func (mao *MultiAPIOrchestrator) runCleanupWorker() {
 	defer mao.wg.Done()
 
@@ -173,14 +173,17 @@ func (mao *MultiAPIOrchestrator) processAPI2Call() {
 	mao.dataManager.UpdateAPI2Data(busLocations)
 }
 
-// processCleanup 정리 작업 처리
+// 🔧 간소화된 정리 작업
 func (mao *MultiAPIOrchestrator) processCleanup() {
-	// 통합 데이터 매니저에서 오래된 데이터 정리
+	// 1. 통합 데이터 매니저에서 오래된 데이터 정리
 	cleanedCount := mao.dataManager.CleanupOldData(mao.config.DataRetentionPeriod)
 
 	if cleanedCount > 0 {
-		mao.logger.Infof("데이터 정리 완료 - 제거된 버스: %d대", cleanedCount)
+		mao.logger.Infof("메모리 데이터 정리 완료 - 제거된 버스: %d대", cleanedCount)
 	}
+
+	// 2. 🔧 새로운 종료 조건에 따른 버스 정리는 dataManager 내부에서 처리됨
+	// (BusTracker의 CleanupMissingBuses 메서드가 자동으로 호출됨)
 }
 
 // Stop 오케스트레이터 정지

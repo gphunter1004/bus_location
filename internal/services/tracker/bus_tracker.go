@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"bus-tracker/config"
 	"bus-tracker/internal/models"
 	"bus-tracker/internal/services/storage"
 	"bus-tracker/internal/utils"
@@ -25,6 +26,7 @@ type BusTrackingInfo struct {
 
 // BusTracker 버스별 마지막 정류장 정보를 추적하는 서비스
 type BusTracker struct {
+	config        *config.Config
 	busInfoMap    map[string]*BusTrackingInfo // key: plateNo, value: 추적 정보
 	mutex         sync.RWMutex
 	tripCounters  map[string]int // 차량별 운행 차수 카운터 (key: plateNo)
@@ -32,8 +34,9 @@ type BusTracker struct {
 }
 
 // NewBusTracker 새로운 BusTracker 생성
-func NewBusTracker() *BusTracker {
+func NewBusTracker(cfg *config.Config) *BusTracker {
 	return &BusTracker{
+		config:       cfg,
 		busInfoMap:   make(map[string]*BusTrackingInfo),
 		tripCounters: make(map[string]int),
 	}
@@ -49,9 +52,9 @@ type BusTrackerWithDuplicateCheck struct {
 }
 
 // NewBusTrackerWithDuplicateCheck 중복 체크 기능이 추가된 BusTracker 생성
-func NewBusTrackerWithDuplicateCheck(duplicateChecker *storage.ElasticsearchDuplicateChecker) *BusTrackerWithDuplicateCheck {
+func NewBusTrackerWithDuplicateCheck(cfg *config.Config, duplicateChecker *storage.ElasticsearchDuplicateChecker) *BusTrackerWithDuplicateCheck {
 	return &BusTrackerWithDuplicateCheck{
-		BusTracker:       NewBusTracker(),
+		BusTracker:       NewBusTracker(cfg),
 		duplicateChecker: duplicateChecker,
 		isFirstRun:       true,
 		recentESData:     make(map[string]*storage.BusLastData),
@@ -83,31 +86,16 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ro
 
 	// 종료된 버스가 다시 나타난 경우 (새로운 운행 시작)
 	if info.IsTerminated {
-		// 종점 근처에서 계속 나타나는 경우 재시작하지 않음
-		if bt.isNearTerminal(currentPosition, int64(totalStations)) &&
-			bt.isNearTerminal(info.LastPosition, int64(totalStations)) {
-			// 종점 근처에서 계속 데이터가 오는 경우 무시
-			info.LastSeenTime = time.Now()
-			return false, info.TripNumber
-		}
-
-		// 실제 새로운 운행 시작 (종점에서 멀리 떨어진 곳에서 시작)
-		if !bt.isNearTerminal(currentPosition, int64(totalStations)) {
-			// 새로운 운행 차수 할당 (동일 차량의 다음 운행)
-			tripNumber := bt.getNextTripNumber(plateNo)
-			info.LastPosition = currentPosition
-			info.PreviousPosition = 0
-			info.LastSeenTime = time.Now()
-			info.StartPosition = currentPosition
-			info.IsTerminated = false
-			info.TripNumber = tripNumber
-			info.RouteNm = routeNm // 노선이 바뀔 수도 있으므로 업데이트
-			return true, tripNumber
-		}
-
-		// 종점 근처에서의 데이터는 무시
+		// 🔧 간소화: 종료된 버스가 다시 나타나면 무조건 새로운 운행으로 간주
+		tripNumber := bt.getNextTripNumber(plateNo)
+		info.LastPosition = currentPosition
+		info.PreviousPosition = 0
 		info.LastSeenTime = time.Now()
-		return false, info.TripNumber
+		info.StartPosition = currentPosition
+		info.IsTerminated = false
+		info.TripNumber = tripNumber
+		info.RouteNm = routeNm
+		return true, tripNumber
 	}
 
 	// 기존 버스 - 변경 확인
@@ -121,15 +109,6 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ro
 	// 위치는 동일하지만 마지막 목격 시간은 업데이트
 	info.LastSeenTime = time.Now()
 	return false, info.TripNumber
-}
-
-// isNearTerminal 종점 근처인지 확인 (전체 정류소의 90% 이상)
-func (bt *BusTracker) isNearTerminal(position int64, totalStations int64) bool {
-	if totalStations <= 0 {
-		return false
-	}
-	threshold := int64(float64(totalStations) * 0.9)
-	return position >= threshold
 }
 
 // getNextTripNumber 다음 운행 차수 반환 (차량별 관리)
@@ -181,8 +160,8 @@ func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, l
 
 		routeNm := bus.GetRouteIDString() // RouteNm 우선, 없으면 RouteId
 
-		// 종료 조건 체크
-		if bt.shouldTerminateBus(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
+		// 🔧 새로운 종료 조건 1: 종점 도착 시 종료 (config에서 활성화된 경우만)
+		if bt.config.EnableTerminalStop && bt.shouldTerminateAtTerminal(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
 			bt.TerminateBusTracking(bus.PlateNo, "종점 도달", logger)
 			// 종료된 버스도 한 번은 ES에 전송 (종료 표시를 위해)
 			bus.TripNumber = bt.GetTripNumber(bus.PlateNo)
@@ -224,8 +203,8 @@ func (bt *BusTrackerWithDuplicateCheck) FilterChangedStationsWithDuplicateCheck(
 
 		routeNm := bus.GetRouteIDString() // RouteNm 우선, 없으면 RouteId
 
-		// 종료 조건 체크
-		if bt.BusTracker.ShouldTerminateBus(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
+		// 🔧 새로운 종료 조건 1: 종점 도착 시 종료 (config에서 활성화된 경우만)
+		if bt.BusTracker.config.EnableTerminalStop && bt.BusTracker.shouldTerminateAtTerminal(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
 			bt.BusTracker.TerminateBusTracking(bus.PlateNo, "종점 도달", logger)
 			// 종료된 버스도 한 번은 ES에 전송 (종료 표시를 위해)
 			bus.TripNumber = bt.BusTracker.GetTripNumber(bus.PlateNo)
@@ -342,31 +321,16 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 
 	// 종료된 버스가 다시 나타난 경우 (새로운 운행 시작)
 	if info.IsTerminated {
-		// 종점 근처에서 계속 나타나는 경우 재시작하지 않음
-		if bt.BusTracker.isNearTerminal(currentPosition, int64(totalStations)) &&
-			bt.BusTracker.isNearTerminal(info.LastPosition, int64(totalStations)) {
-			// 종점 근처에서 계속 데이터가 오는 경우 무시
-			info.LastSeenTime = time.Now()
-			return false, info.TripNumber
-		}
-
-		// 실제 새로운 운행 시작 (종점에서 멀리 떨어진 곳에서 시작)
-		if !bt.BusTracker.isNearTerminal(currentPosition, int64(totalStations)) {
-			// 새로운 운행 차수 할당 (동일 차량의 다음 운행)
-			tripNumber := bt.BusTracker.getNextTripNumber(plateNo)
-			info.LastPosition = currentPosition
-			info.PreviousPosition = 0
-			info.LastSeenTime = time.Now()
-			info.StartPosition = currentPosition
-			info.IsTerminated = false
-			info.TripNumber = tripNumber
-			info.RouteNm = routeNm // 노선이 바뀔 수도 있으므로 업데이트
-			return true, tripNumber
-		}
-
-		// 종점 근처에서의 데이터는 무시
+		// 🔧 간소화: 종료된 버스가 다시 나타나면 무조건 새로운 운행으로 간주
+		tripNumber := bt.BusTracker.getNextTripNumber(plateNo)
+		info.LastPosition = currentPosition
+		info.PreviousPosition = 0
 		info.LastSeenTime = time.Now()
-		return false, info.TripNumber
+		info.StartPosition = currentPosition
+		info.IsTerminated = false
+		info.TripNumber = tripNumber
+		info.RouteNm = routeNm
+		return true, tripNumber
 	}
 
 	// 기존 버스 - 변경 확인
@@ -382,59 +346,58 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 	return false, info.TripNumber
 }
 
-// ShouldTerminateBus 버스 종료 조건 체크 (public 메서드)
-func (bt *BusTracker) ShouldTerminateBus(plateNo string, currentPosition, totalStations int64) bool {
-	return bt.shouldTerminateBus(plateNo, currentPosition, totalStations)
-}
-
-// shouldTerminateBus 버스 종료 조건 체크 (internal)
-func (bt *BusTracker) shouldTerminateBus(plateNo string, currentPosition, totalStations int64) bool {
-	bt.mutex.RLock()
-	info, exists := bt.busInfoMap[plateNo]
-	bt.mutex.RUnlock()
-
-	if !exists || info.IsTerminated {
+// 🔧 새로운 종료 조건 1: 종점 도착 시 종료
+func (bt *BusTracker) shouldTerminateAtTerminal(plateNo string, currentPosition, totalStations int64) bool {
+	if totalStations <= 0 {
 		return false
 	}
 
-	// 종점 도달 (전체 정류소의 95% 이상)
-	if totalStations > 0 && currentPosition >= (totalStations-2) {
-		return true
-	}
-
-	return false
+	// 마지막 정류장에 도착한 경우 (전체 정류소 수와 동일하거나 그 이상)
+	return currentPosition >= totalStations
 }
 
-// CleanupMissingBuses 일정 시간 동안 보이지 않은 버스들을 정리
-func (bt *BusTracker) CleanupMissingBuses(timeout time.Duration, logger *utils.Logger) int {
+// 🔧 새로운 종료 조건 2: 버스 미목격 시간 초과로 정리
+func (bt *BusTracker) CleanupMissingBuses(logger *utils.Logger) int {
 	bt.mutex.Lock()
 	defer bt.mutex.Unlock()
 
-	var removedBuses []string
 	var terminatedBuses []string
+	var removedBuses []string
 	now := time.Now()
 
 	for plateNo, info := range bt.busInfoMap {
 		timeSinceLastSeen := now.Sub(info.LastSeenTime)
 
-		if timeSinceLastSeen > timeout {
-			if info.IsTerminated && timeSinceLastSeen > 5*time.Minute {
-				removedBuses = append(removedBuses, plateNo)
-			} else if !info.IsTerminated {
+		// 🔧 새로운 종료 조건 2: config에서 설정한 시간만큼 미목격시 종료
+		if timeSinceLastSeen > bt.config.BusDisappearanceTimeout {
+			if !info.IsTerminated {
+				// 아직 종료되지 않은 버스는 종료 처리
 				info.IsTerminated = true
 				terminatedBuses = append(terminatedBuses, plateNo)
+				if logger != nil {
+					logger.Infof("버스 운행 종료 - 차량번호: %s, 노선: %s, %d차수 완료, 이유: %v 미목격",
+						plateNo, info.RouteNm, info.TripNumber, timeSinceLastSeen.Round(time.Minute))
+				}
 			} else {
-				removedBuses = append(removedBuses, plateNo)
+				// 이미 종료된 버스는 메모리에서 완전 제거 (추가 5분 후)
+				if timeSinceLastSeen > bt.config.BusDisappearanceTimeout+5*time.Minute {
+					removedBuses = append(removedBuses, plateNo)
+				}
 			}
 		}
 	}
 
-	// 실제 삭제 실행
+	// 메모리에서 완전 제거
 	for _, plateNo := range removedBuses {
 		delete(bt.busInfoMap, plateNo)
 	}
 
-	return len(terminatedBuses) + len(removedBuses)
+	totalProcessed := len(terminatedBuses) + len(removedBuses)
+	if totalProcessed > 0 && logger != nil {
+		logger.Infof("버스 정리 완료 - 종료: %d대, 제거: %d대", len(terminatedBuses), len(removedBuses))
+	}
+
+	return totalProcessed
 }
 
 // GetTripNumber 버스의 운행 차수 반환

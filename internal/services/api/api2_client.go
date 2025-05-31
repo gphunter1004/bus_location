@@ -14,25 +14,11 @@ import (
 	"bus-tracker/internal/utils"
 )
 
-// API2Client 공공데이터포털 버스위치정보 API 클라이언트
+// API2Client 공공데이터포털 버스위치정보 API 클라이언트 (통합 모드 전용)
 type API2Client struct {
 	APIClientBase
 	client       *http.Client
 	stationCache *cache.StationCacheService
-}
-
-// NewAPI2Client 새로운 API2 클라이언트 생성 (기본 버전)
-func NewAPI2Client(cfg *config.Config, logger *utils.Logger) *API2Client {
-	return &API2Client{
-		APIClientBase: APIClientBase{
-			config: cfg,
-			logger: logger,
-		},
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		stationCache: cache.NewStationCacheService(cfg, logger, "api2"),
-	}
 }
 
 // NewAPI2ClientWithSharedCache 공유 캐시를 사용하는 API2 클라이언트 생성 (통합 모드용)
@@ -275,7 +261,7 @@ func (ac *API2Client) buildAPIURL(routeID string) string {
 		"numOfRows=100",
 	}
 
-	baseURL := ac.config.APIBaseURL
+	baseURL := ac.config.API2Config.BaseURL
 	if len(params) > 0 {
 		if utils.Contains(baseURL, "?") {
 			return baseURL + "&" + utils.JoinStrings(params, "&")

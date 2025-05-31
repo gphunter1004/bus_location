@@ -14,25 +14,11 @@ import (
 	"bus-tracker/internal/utils"
 )
 
-// API1Client 경기버스정보 API 클라이언트
+// API1Client 경기버스정보 API 클라이언트 (통합 모드 전용)
 type API1Client struct {
 	APIClientBase
 	client       *http.Client
 	stationCache *cache.StationCacheService
-}
-
-// NewAPI1Client 새로운 API1 클라이언트 생성 (기본 버전)
-func NewAPI1Client(cfg *config.Config, logger *utils.Logger) *API1Client {
-	return &API1Client{
-		APIClientBase: APIClientBase{
-			config: cfg,
-			logger: logger,
-		},
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		stationCache: cache.NewStationCacheService(cfg, logger, "api1"),
-	}
 }
 
 // NewAPI1ClientWithSharedCache 공유 캐시를 사용하는 API1 클라이언트 생성 (통합 모드용)
@@ -213,7 +199,7 @@ func (ac *API1Client) buildAPIURL(routeID string) string {
 		"routeId=" + routeID,
 	}
 
-	baseURL := ac.config.APIBaseURL
+	baseURL := ac.config.API1Config.BaseURL
 	if len(params) > 0 {
 		if utils.Contains(baseURL, "?") {
 			return baseURL + "&" + utils.JoinStrings(params, "&")
