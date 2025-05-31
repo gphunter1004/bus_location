@@ -1,4 +1,4 @@
-// internal/utils/common.go - 공용 헬퍼 함수 모음
+// internal/utils/common.go - 수정된 공용 헬퍼 함수 모음
 package utils
 
 import (
@@ -18,7 +18,7 @@ func (StringHelpers) Contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-// JoinStrings 문자열 슬라이스를 구분자로 연결
+// Join 문자열 슬라이스를 구분자로 연결
 func (StringHelpers) Join(strs []string, sep string) string {
 	return strings.Join(strs, sep)
 }
@@ -73,6 +73,11 @@ var Convert ConversionHelpers
 
 // StringToInt 문자열을 int로 변환 (실패시 기본값 반환)
 func (ConversionHelpers) StringToInt(s string, defaultValue int) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return defaultValue
+	}
+
 	if value, err := strconv.Atoi(s); err == nil {
 		return value
 	}
@@ -81,6 +86,11 @@ func (ConversionHelpers) StringToInt(s string, defaultValue int) int {
 
 // StringToInt64 문자열을 int64로 변환 (실패시 기본값 반환)
 func (ConversionHelpers) StringToInt64(s string, defaultValue int64) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return defaultValue
+	}
+
 	if value, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return value
 	}
@@ -89,6 +99,11 @@ func (ConversionHelpers) StringToInt64(s string, defaultValue int64) int64 {
 
 // StringToBool 문자열을 bool로 변환 (실패시 기본값 반환)
 func (ConversionHelpers) StringToBool(s string, defaultValue bool) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return defaultValue
+	}
+
 	if value, err := strconv.ParseBool(s); err == nil {
 		return value
 	}
@@ -97,6 +112,11 @@ func (ConversionHelpers) StringToBool(s string, defaultValue bool) bool {
 
 // StringToFloat64 문자열을 float64로 변환 (실패시 기본값 반환)
 func (ConversionHelpers) StringToFloat64(s string, defaultValue float64) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return defaultValue
+	}
+
 	if value, err := strconv.ParseFloat(s, 64); err == nil {
 		return value
 	}
@@ -177,6 +197,11 @@ func (TimeHelpers) CalculateUptime(startTime time.Time) string {
 
 // ParseDurationSeconds 초 단위 문자열을 Duration으로 변환
 func (TimeHelpers) ParseDurationSeconds(seconds string, defaultSeconds int) time.Duration {
+	seconds = strings.TrimSpace(seconds)
+	if seconds == "" {
+		return time.Duration(defaultSeconds) * time.Second
+	}
+
 	if value, err := strconv.Atoi(seconds); err == nil {
 		return time.Duration(value) * time.Second
 	}
@@ -185,6 +210,11 @@ func (TimeHelpers) ParseDurationSeconds(seconds string, defaultSeconds int) time
 
 // ParseDurationMinutes 분 단위 문자열을 Duration으로 변환
 func (TimeHelpers) ParseDurationMinutes(minutes string, defaultMinutes int) time.Duration {
+	minutes = strings.TrimSpace(minutes)
+	if minutes == "" {
+		return time.Duration(defaultMinutes) * time.Minute
+	}
+
 	if value, err := strconv.Atoi(minutes); err == nil {
 		return time.Duration(value) * time.Minute
 	}
@@ -257,12 +287,20 @@ func (ValidationHelpers) IsEmpty(value interface{}) bool {
 
 // IsNumeric 문자열이 숫자인지 확인
 func (ValidationHelpers) IsNumeric(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
 	_, err := strconv.ParseFloat(s, 64)
 	return err == nil
 }
 
 // IsInteger 문자열이 정수인지 확인
 func (ValidationHelpers) IsInteger(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
 	_, err := strconv.Atoi(s)
 	return err == nil
 }
