@@ -180,37 +180,39 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getIntEnv 환경변수에서 정수값을 가져오거나 기본값 반환 (공용 헬퍼 사용)
+// getIntEnv 환경변수에서 정수값을 가져오거나 기본값 반환 (수정된 버전)
 func getIntEnv(key string, defaultValue int) int {
 	value := utils.String.TrimSpace(os.Getenv(key))
 
 	// 🔧 디버깅: 변환 과정 출력
 	log.Printf("DEBUG - getIntEnv('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
 
-	result := utils.Convert.StringToInt(value, defaultValue)
+	// 새로운 헬퍼 함수 사용 (성공 여부 확인 가능)
+	result, success := utils.Convert.StringToIntWithSuccess(value, defaultValue)
 
-	if value != "" && result == defaultValue {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d를 사용합니다.", key, defaultValue)
+	if value != "" && !success {
+		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %d를 사용합니다.", key, value, defaultValue)
 	}
 
-	log.Printf("DEBUG - getIntEnv('%s'): result=%d", key, result)
+	log.Printf("DEBUG - getIntEnv('%s'): result=%d (성공: %t)", key, result, success)
 	return result
 }
 
-// getBoolEnv 환경변수에서 불린값을 가져오거나 기본값 반환 (공용 헬퍼 사용)
+// getBoolEnv 환경변수에서 불린값을 가져오거나 기본값 반환 (수정된 버전)
 func getBoolEnv(key string, defaultValue bool) bool {
 	value := utils.String.TrimSpace(os.Getenv(key))
 
 	// 🔧 디버깅: 변환 과정 출력
 	log.Printf("DEBUG - getBoolEnv('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
 
-	result := utils.Convert.StringToBool(value, defaultValue)
+	// 새로운 헬퍼 함수 사용 (성공 여부 확인 가능)
+	result, success := utils.Convert.StringToBoolWithSuccess(value, defaultValue)
 
-	if value != "" && result == defaultValue {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %t를 사용합니다.", key, defaultValue)
+	if value != "" && !success {
+		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %t를 사용합니다.", key, value, defaultValue)
 	}
 
-	log.Printf("DEBUG - getBoolEnv('%s'): result=%t", key, result)
+	log.Printf("DEBUG - getBoolEnv('%s'): result=%t (성공: %t)", key, result, success)
 	return result
 }
 
@@ -238,37 +240,41 @@ func getRouteIDList(key string) []string {
 	return utils.Slice.RemoveDuplicateStrings(cleanRouteIDs)
 }
 
-// getDuration 환경변수에서 duration 파싱 (공용 헬퍼 사용)
+// getDuration 환경변수에서 duration 파싱 (수정된 버전)
 func getDuration(key string, defaultSeconds int) time.Duration {
 	value := utils.String.TrimSpace(os.Getenv(key))
 
 	// 🔧 디버깅: 변환 과정 출력
 	log.Printf("DEBUG - getDuration('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
 
-	result := utils.Time.ParseDurationSeconds(value, defaultSeconds)
+	// 정수 변환 시도
+	intValue, success := utils.Convert.StringToIntWithSuccess(value, defaultSeconds)
 
-	if value != "" && result == time.Duration(defaultSeconds)*time.Second {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d초를 사용합니다.", key, defaultSeconds)
+	if value != "" && !success {
+		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %d초를 사용합니다.", key, value, defaultSeconds)
 	}
 
-	log.Printf("DEBUG - getDuration('%s'): result=%v", key, result)
+	result := time.Duration(intValue) * time.Second
+	log.Printf("DEBUG - getDuration('%s'): result=%v (성공: %t)", key, result, success)
 	return result
 }
 
-// getDurationMinutes 환경변수에서 분 단위 duration 파싱 (공용 헬퍼 사용)
+// getDurationMinutes 환경변수에서 분 단위 duration 파싱 (수정된 버전)
 func getDurationMinutes(key string, defaultMinutes int) time.Duration {
 	value := utils.String.TrimSpace(os.Getenv(key))
 
 	// 🔧 디버깅: 변환 과정 출력
 	log.Printf("DEBUG - getDurationMinutes('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
 
-	result := utils.Time.ParseDurationMinutes(value, defaultMinutes)
+	// 정수 변환 시도
+	intValue, success := utils.Convert.StringToIntWithSuccess(value, defaultMinutes)
 
-	if value != "" && result == time.Duration(defaultMinutes)*time.Minute {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d분을 사용합니다.", key, defaultMinutes)
+	if value != "" && !success {
+		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %d분을 사용합니다.", key, value, defaultMinutes)
 	}
 
-	log.Printf("DEBUG - getDurationMinutes('%s'): result=%v", key, result)
+	result := time.Duration(intValue) * time.Minute
+	log.Printf("DEBUG - getDurationMinutes('%s'): result=%v (성공: %t)", key, result, success)
 	return result
 }
 

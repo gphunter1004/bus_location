@@ -84,6 +84,19 @@ func (ConversionHelpers) StringToInt(s string, defaultValue int) int {
 	return defaultValue
 }
 
+// StringToIntWithSuccess 문자열을 int로 변환하고 성공 여부도 반환
+func (ConversionHelpers) StringToIntWithSuccess(s string, defaultValue int) (int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return defaultValue, false // 빈 문자열이므로 기본값 사용
+	}
+
+	if value, err := strconv.Atoi(s); err == nil {
+		return value, true // 변환 성공
+	}
+	return defaultValue, false // 변환 실패
+}
+
 // StringToInt64 문자열을 int64로 변환 (실패시 기본값 반환)
 func (ConversionHelpers) StringToInt64(s string, defaultValue int64) int64 {
 	s = strings.TrimSpace(s)
@@ -108,6 +121,19 @@ func (ConversionHelpers) StringToBool(s string, defaultValue bool) bool {
 		return value
 	}
 	return defaultValue
+}
+
+// StringToBoolWithSuccess 문자열을 bool로 변환하고 성공 여부도 반환
+func (ConversionHelpers) StringToBoolWithSuccess(s string, defaultValue bool) (bool, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return defaultValue, false // 빈 문자열이므로 기본값 사용
+	}
+
+	if value, err := strconv.ParseBool(s); err == nil {
+		return value, true // 변환 성공
+	}
+	return defaultValue, false // 변환 실패
 }
 
 // StringToFloat64 문자열을 float64로 변환 (실패시 기본값 반환)
