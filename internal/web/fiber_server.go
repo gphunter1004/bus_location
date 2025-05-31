@@ -1,4 +1,4 @@
-// internal/web/fiber_server.go - 강제 종료 기능 포함
+// internal/web/fiber_server.go - Fiber v2 호환성 수정
 package web
 
 import (
@@ -58,42 +58,39 @@ func NewFiberServer(
 	engine.Reload(true) // 개발 중에는 true, 프로덕션에서는 false
 	engine.Debug(true)  // 개발 중에는 true
 
-	// Fiber 앱 생성 (개선된 설정)
+	// Fiber 앱 생성 (Fiber v2 호환성 수정)
 	app := fiber.New(fiber.Config{
-		Views:                        engine,
-		ErrorHandler:                 customErrorHandler,
-		DisableKeepalive:             false,
-		ReadTimeout:                  30 * time.Second,
-		WriteTimeout:                 30 * time.Second,
-		IdleTimeout:                  120 * time.Second,
-		Prefork:                      false, // 개발 중에는 false
-		ServerHeader:                 "Bus-Tracker-Server",
-		StrictRouting:                false,
-		CaseSensitive:                false,
-		UnescapePath:                 false,
-		ETag:                         true,
-		BodyLimit:                    4 * 1024 * 1024, // 4MB
-		Concurrency:                  256 * 1024,
-		DisableDefaultDate:           false,
-		DisableDefaultContentType:    false,
-		DisableHeaderNormalizing:     false,
-		DisableStartupMessage:        false,
-		AppName:                      "Bus Tracker",
-		GETOnly:                      false,
-		Network:                      "tcp",
-		EnableTrustedProxyCheck:      false,
-		TrustedProxies:               []string{},
-		EnableIPValidation:           false,
-		EnablePrintRoutes:            false,
-		ColorScheme:                  fiber.DefaultColors,
-		RequestMethods:               fiber.DefaultMethods,
-		EnableSplittingOnParsers:     false,
-		DisableDefaultErrorHandler:   false,
-		StructTag:                    "json",
-		StreamRequestBody:            false,
-		DisablePreParseMultipartForm: false,
-		ReduceMemoryUsage:            false,
-		CompressedFileSuffix:         ".fiber.gz",
+		Views:                     engine,
+		ErrorHandler:              customErrorHandler,
+		DisableKeepalive:          false,
+		ReadTimeout:               30 * time.Second,
+		WriteTimeout:              30 * time.Second,
+		IdleTimeout:               120 * time.Second,
+		Prefork:                   false, // 개발 중에는 false
+		ServerHeader:              "Bus-Tracker-Server",
+		StrictRouting:             false,
+		CaseSensitive:             false,
+		UnescapePath:              false,
+		ETag:                      true,
+		BodyLimit:                 4 * 1024 * 1024, // 4MB
+		Concurrency:               256 * 1024,
+		DisableDefaultDate:        false,
+		DisableDefaultContentType: false,
+		DisableHeaderNormalizing:  false,
+		DisableStartupMessage:     false,
+		AppName:                   "Bus Tracker",
+		GETOnly:                   false,
+		Network:                   "tcp",
+		EnableTrustedProxyCheck:   false,
+		TrustedProxies:            []string{},
+		EnableIPValidation:        false,
+		EnablePrintRoutes:         false,
+		ColorScheme:               fiber.DefaultColors,
+		RequestMethods:            fiber.DefaultMethods,
+		EnableSplittingOnParsers:  false,
+		ReduceMemoryUsage:         false,
+		CompressedFileSuffix:      ".fiber.gz",
+		// DisableDefaultErrorHandler와 StructTag 제거 (Fiber v2에서 지원하지 않음)
 	})
 
 	// 복구 미들웨어 추가 (패닉 방지)
@@ -354,7 +351,7 @@ func (fs *FiberServer) Stop() error {
 	go func() {
 		// FastHTTP 서버에 직접 접근하여 강제 종료
 		if app := fs.app; app != nil {
-			// Fiber의 내부 서버에 접근 (v2에서는 ShutdownWithContext 사용)
+			// Fiber의 내부 서버에 접근 (v2에서는 ShutdownWithTimeout 사용)
 			forceDone <- app.ShutdownWithTimeout(3 * time.Second)
 		} else {
 			forceDone <- fmt.Errorf("앱이 이미 종료됨")
