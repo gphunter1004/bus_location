@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // API1Response 경기버스정보 API 응답 구조체
@@ -55,22 +56,72 @@ type API2Body struct {
 	TotalCount int       `json:"totalCount"`
 }
 
-// API2Items API2 아이템들 - 빈 응답 처리를 위한 커스텀 언마샬링
+// API2Items API2 아이템들 - 단일 객체와 배열 모두 처리하는 커스텀 언마샬링
 type API2Items struct {
 	Item []API2BusLocationItem `json:"item"`
 }
 
-// UnmarshalJSON API2Items에 대한 커스텀 JSON 언마샬링
+// UnmarshalJSON API2Items에 대한 커스텀 JSON 언마샬링 (단일/배열 처리)
 func (items *API2Items) UnmarshalJSON(data []byte) error {
-	// 빈 문자열인 경우 빈 배열로 처리
+	// 빈 문자열이나 null인 경우 빈 배열로 처리
 	if string(data) == `""` || string(data) == `null` {
 		items.Item = []API2BusLocationItem{}
 		return nil
 	}
 
-	// 정상적인 객체인 경우 일반 언마샬링
-	type Alias API2Items
-	return json.Unmarshal(data, (*Alias)(items))
+	// 임시 구조체로 먼저 파싱 시도
+	var temp struct {
+		Item json.RawMessage `json:"item"`
+	}
+
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+
+	// item이 없는 경우
+	if len(temp.Item) == 0 {
+		items.Item = []API2BusLocationItem{}
+		return nil
+	}
+
+	// item이 배열인지 단일 객체인지 확인
+	var itemData []byte = temp.Item
+
+	// 첫 번째 문자가 '['이면 배열, '{'이면 단일 객체
+	trimmed := strings.TrimSpace(string(itemData))
+	if len(trimmed) == 0 {
+		items.Item = []API2BusLocationItem{}
+		return nil
+	}
+
+	if trimmed[0] == '[' {
+		// 배열인 경우
+		var itemArray []API2BusLocationItem
+		if err := json.Unmarshal(itemData, &itemArray); err != nil {
+			return fmt.Errorf("배열 파싱 실패: %v", err)
+		}
+		items.Item = itemArray
+	} else if trimmed[0] == '{' {
+		// 단일 객체인 경우
+		var singleItem API2BusLocationItem
+		if err := json.Unmarshal(itemData, &singleItem); err != nil {
+			return fmt.Errorf("단일 객체 파싱 실패: %v", err)
+		}
+		items.Item = []API2BusLocationItem{singleItem}
+	} else {
+		// 예상치 못한 형식
+		return fmt.Errorf("예상치 못한 item 형식: %s", trimmed[:min(50, len(trimmed))])
+	}
+
+	return nil
+}
+
+// min 함수 추가
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // API2BusLocationItem API2의 실제 버스 위치 정보
@@ -83,9 +134,9 @@ type API2BusLocationItem struct {
 	NodeNm  string `json:"nodenm,omitempty"` // 정류장명 (예: "포스코더샵.롯데캐슬")
 	NodeOrd int    `json:"nodeord"`          // 정류장순서
 	// 노선 정보 - routeNm은 실제로 숫자로 온다
-	RouteNm int    `json:"routenm"` // 노선번호 (예: 6003) - 숫자로 변경
-	RouteId string `json:"routeid"` // 노선ID (예: "GGB233000266") - API2에서는 RouteId 필드 사용
-	RouteTp string `json:"routetp"` // 노선유형 (예: "직행좌석버스")
+	RouteNm int    `json:"routenm"`           // 노선번호 (예: 6003) - 숫자로 변경
+	RouteId string `json:"routeid,omitempty"` // 노선ID (예: "GGB233000266") - API2에서는 RouteId 필드 사용
+	RouteTp string `json:"routetp,omitempty"` // 노선유형 (예: "직행좌석버스")
 	// 차량 정보
 	VehicleNo string `json:"vehicleno"` // 차량번호 (예: "경기76아4432")
 	Timestamp string `json:"@timestamp,omitempty"`

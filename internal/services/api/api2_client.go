@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,7 +70,7 @@ func (ac *API2Client) validateAPI2RouteID(routeID string) error {
 	}
 
 	// API2는 GGB로 시작해야 함
-	if !utils.HasPrefix(routeID, "GGB") {
+	if !utils.String.HasPrefix(routeID, "GGB") {
 		return fmt.Errorf("API2 routeID는 'GGB'로 시작해야 합니다: '%s'", routeID)
 	}
 
@@ -97,7 +98,7 @@ func (ac *API2Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 
 	// URL 생성
 	apiURL := ac.buildAPIURL(routeID)
-	ac.logger.Infof("API2 호출 URL: %s", utils.MaskSensitiveURL(apiURL, ac.config.ServiceKey))
+	ac.logger.Infof("API2 호출 URL: %s", utils.String.MaskSensitiveURL(apiURL, ac.config.ServiceKey))
 
 	resp, err := ac.client.Get(apiURL)
 	if err != nil {
@@ -114,36 +115,77 @@ func (ac *API2Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 		return nil, fmt.Errorf("API2 응답 읽기 실패 (routeId: %s): %v", routeID, err)
 	}
 
-	// 응답 내용 디버깅 (처음 200자만)
+	// 응답 내용 디버깅 (처음 500자만)
 	responsePreview := string(body)
-	if len(responsePreview) > 200 {
-		responsePreview = responsePreview[:200] + "..."
+	if len(responsePreview) > 500 {
+		responsePreview = responsePreview[:500] + "..."
 	}
 	ac.logger.Infof("API2 응답 (routeId: %s): %s", routeID, responsePreview)
 
 	return ac.parseResponse(body, routeID)
 }
 
-// parseResponse API2 응답 파싱 (검증 강화)
+// parseResponse API2 응답 파싱 (검증 강화 및 에러 처리 개선)
 func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLocation, error) {
+	// 응답이 비어있는 경우 처리
+	if len(body) == 0 {
+		ac.logger.Warnf("API2 빈 응답 (routeId: %s)", routeID)
+		return []models.BusLocation{}, nil
+	}
+
+	// JSON 파싱 전 응답 구조 확인
+	var rawResponse map[string]interface{}
+	if err := json.Unmarshal(body, &rawResponse); err != nil {
+		ac.logger.Errorf("API2 JSON 사전 파싱 실패 (routeId: %s): %v", routeID, err)
+		ac.logger.Errorf("응답 내용: %s", string(body))
+		return nil, fmt.Errorf("API2 JSON 사전 파싱 실패 (routeId: %s): %v", routeID, err)
+	}
+
+	// 응답 구조 로깅 (디버깅용)
+	ac.logger.Debugf("API2 응답 구조 (routeId: %s): response 키 존재 여부: %v", routeID, rawResponse["response"] != nil)
+
 	var apiResp models.API2Response
 	if err := json.Unmarshal(body, &apiResp); err != nil {
+		ac.logger.Errorf("API2 JSON 파싱 실패 (routeId: %s): %v", routeID, err)
+
+		// 상세한 파싱 오류 정보 제공
+		if strings.Contains(err.Error(), "cannot unmarshal") {
+			ac.logger.Errorf("파싱 오류 상세: items.item 구조가 예상과 다름")
+
+			// items.item 구조 확인
+			if response, ok := rawResponse["response"].(map[string]interface{}); ok {
+				if body, ok := response["body"].(map[string]interface{}); ok {
+					if items, ok := body["items"].(map[string]interface{}); ok {
+						if item, exists := items["item"]; exists {
+							ac.logger.Errorf("items.item 타입: %T", item)
+							if itemStr, err := json.Marshal(item); err == nil {
+								ac.logger.Errorf("items.item 내용: %s", string(itemStr))
+							}
+						}
+					}
+				}
+			}
+		}
+
 		return nil, fmt.Errorf("API2 JSON 파싱 실패 (routeId: %s): %v", routeID, err)
 	}
 
 	// API 응답 성공 여부 확인
 	if !apiResp.IsSuccess() {
+		ac.logger.Warnf("API2 응답 오류 (routeId: %s): %s", routeID, apiResp.GetErrorMessage())
 		return nil, fmt.Errorf("API2 오류 (routeId: %s): %s", routeID, apiResp.GetErrorMessage())
 	}
 
 	busItems := apiResp.GetBusLocationItemList()
+	ac.logger.Infof("API2 파싱 완료 (routeId: %s): %d개 버스 아이템", routeID, len(busItems))
 
 	// 데이터 품질 검증
 	validItems := []models.API2BusLocationItem{}
 
-	for _, item := range busItems {
+	for i, item := range busItems {
 		// 필수 필드 검증
 		if item.VehicleNo == "" {
+			ac.logger.Warnf("버스 %d: 차량번호 없음, 건너뛰기", i)
 			continue
 		}
 
@@ -156,11 +198,19 @@ func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLo
 
 		// GPS 좌표 유효성 검증 (한국 좌표 범위)
 		if item.GpsLati < 33.0 || item.GpsLati > 38.0 || item.GpsLong < 124.0 || item.GpsLong > 132.0 {
+			ac.logger.Warnf("버스 %s: GPS 좌표 이상 (%.6f, %.6f)", item.VehicleNo, item.GpsLati, item.GpsLong)
 			// GPS 좌표가 이상해도 데이터는 유지 (정류장 정보가 있으면)
+		}
+
+		// 노선 정보 검증
+		if item.RouteNm == 0 {
+			ac.logger.Warnf("버스 %s: 노선번호 없음", item.VehicleNo)
 		}
 
 		validItems = append(validItems, item)
 	}
+
+	ac.logger.Infof("API2 검증 완료 (routeId: %s): %d/%d개 유효 버스", routeID, len(validItems), len(busItems))
 
 	// API2BusLocationItem을 BusLocation으로 변환
 	var busLocations []models.BusLocation
@@ -177,6 +227,8 @@ func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLo
 
 		busLocations = append(busLocations, busLocation)
 	}
+
+	ac.logger.Infof("API2 변환 완료 (routeId: %s): %d개 버스 위치", routeID, len(busLocations))
 
 	return busLocations, nil
 }
@@ -241,11 +293,23 @@ func (ac *API2Client) FetchAllBusLocations(routeIDs []string) ([]models.BusLocat
 
 		if len(result.busLocations) > 0 {
 			allBusLocations = append(allBusLocations, result.busLocations...)
+			ac.logger.Infof("API2 노선 %s: %d개 버스 데이터 수집", result.routeID, len(result.busLocations))
+		} else {
+			ac.logger.Infof("API2 노선 %s: 운행 중인 버스 없음", result.routeID)
 		}
 	}
 
+	// 전체 실패 시에만 에러 반환
 	if errorCount == len(routeIDs) {
 		return nil, fmt.Errorf("모든 노선의 API2 호출이 실패했습니다. 마지막 오류: %v", lastError)
+	}
+
+	// 부분 실패 시 경고 로그
+	if errorCount > 0 {
+		ac.logger.Warnf("API2 호출 부분 실패: %d/%d 노선 실패, 총 %d개 버스 데이터 수집",
+			errorCount, len(routeIDs), len(allBusLocations))
+	} else {
+		ac.logger.Infof("API2 호출 성공: 모든 노선에서 총 %d개 버스 데이터 수집", len(allBusLocations))
 	}
 
 	return allBusLocations, nil
@@ -263,10 +327,10 @@ func (ac *API2Client) buildAPIURL(routeID string) string {
 
 	baseURL := ac.config.API2Config.BaseURL
 	if len(params) > 0 {
-		if utils.Contains(baseURL, "?") {
-			return baseURL + "&" + utils.JoinStrings(params, "&")
+		if utils.String.Contains(baseURL, "?") {
+			return baseURL + "&" + utils.String.Join(params, "&")
 		}
-		return baseURL + "?" + utils.JoinStrings(params, "&")
+		return baseURL + "?" + utils.String.Join(params, "&")
 	}
 	return baseURL
 }
