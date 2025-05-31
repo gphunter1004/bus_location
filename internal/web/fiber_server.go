@@ -113,7 +113,7 @@ func NewFiberServer(
 ) *FiberServer {
 
 	// 템플릿 엔진 설정
-	engine := html.New("./web/templates", ".html")
+	engine := html.New("./internal/web/templates", ".html")
 	engine.Reload(true) // 개발 중에는 true, 프로덕션에서는 false
 	engine.Debug(true)  // 개발 중에는 true
 
@@ -136,7 +136,7 @@ func NewFiberServer(
 
 	// 템플릿 핸들러 생성
 	templateHandler, err := handlers.NewTemplateHandler(
-		cfg, logger, orchestrator, busTracker, dataManager, "./web/templates")
+		cfg, logger, orchestrator, busTracker, dataManager, "./internal/web/templates")
 	if err != nil {
 		log.Fatalf("템플릿 핸들러 생성 실패: %v", err)
 	}
@@ -164,7 +164,7 @@ func NewFiberServer(
 // setupRoutes 라우트 설정
 func (fs *FiberServer) setupRoutes() {
 	// 정적 파일 제공
-	fs.app.Static("/static", "./web/static")
+	fs.app.Static("/static", "./internal/web/static")
 
 	// 웹 페이지 라우트
 	fs.setupWebRoutes()
@@ -251,7 +251,7 @@ func (fs *FiberServer) GetApp() *fiber.App {
 
 // ReloadTemplates 템플릿 재로드 (개발 중 유용)
 func (fs *FiberServer) ReloadTemplates() error {
-	return fs.templateHandler.ReloadTemplates("./web/templates")
+	return fs.templateHandler.ReloadTemplates("./internal/web/templates")
 }
 
 // SetupDevelopmentMode 개발 모드 설정

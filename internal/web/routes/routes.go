@@ -85,7 +85,7 @@ func NewRouter(app *fiber.App, deps *Dependencies) *Router {
 		deps.Orchestrator,
 		deps.BusTracker,
 		deps.DataManager,
-		"./web/templates",
+		"./internal/web/templates",
 	)
 	if err != nil {
 		deps.Logger.Fatalf("템플릿 핸들러 생성 실패: %v", err)
