@@ -1,4 +1,4 @@
-// internal/web/services/tracking_service.go
+// internal/web/services/tracking.go - 공용 헬퍼 사용으로 수정
 package services
 
 import (
@@ -37,7 +37,7 @@ func (s *TrackingService) GetTrackedBuses(includeDetails bool) (responses.Tracke
 	dailyStats := s.busTracker.GetDailyTripStatistics()
 	totalTracked := s.busTracker.GetTrackedBusCount()
 
-	// 일일 요약 계산
+	// 일일 요약 계산 (공용 헬퍼 사용)
 	var totalTrips, maxTrips int
 	var activeBusesWithTrips int
 
@@ -45,9 +45,7 @@ func (s *TrackingService) GetTrackedBuses(includeDetails bool) (responses.Tracke
 		if tripCount > 0 {
 			activeBusesWithTrips++
 			totalTrips += tripCount
-			if tripCount > maxTrips {
-				maxTrips = tripCount
-			}
+			maxTrips = utils.Math.Max(maxTrips, tripCount) // 공용 헬퍼 사용
 		}
 	}
 
@@ -83,25 +81,7 @@ func (s *TrackingService) getBusTrackingInfoList() []responses.BusTrackingInfo {
 	var buses []responses.BusTrackingInfo
 
 	// 실제 구현: busTracker에서 모든 추적 중인 버스 정보를 가져옴
-	// 위에서 제안한 GetAllBusTrackingInfo() 메서드가 구현되어 있다고 가정
-	// 현재는 기존 메서드들을 활용하여 구현
-
-	// 임시로 모의 데이터 반환 (실제로는 GetAllBusTrackingInfo() 사용)
-	// allBusInfo := s.busTracker.GetAllBusTrackingInfo()
-	// for plateNo, trackingInfo := range allBusInfo {
-	//     buses = append(buses, responses.BusTrackingInfo{
-	//         PlateNo:          plateNo,
-	//         RouteNm:          trackingInfo.RouteNm,
-	//         LastPosition:     trackingInfo.LastPosition,
-	//         PreviousPosition: trackingInfo.PreviousPosition,
-	//         LastSeenTime:     trackingInfo.LastSeenTime,
-	//         TripNumber:       trackingInfo.TripNumber,
-	//         IsTerminated:     trackingInfo.IsTerminated,
-	//         TotalStations:    trackingInfo.TotalStations,
-	//         TripStartTime:    trackingInfo.TripStartTime,
-	//     })
-	// }
-
+	// 현재는 임시로 빈 배열 반환 (실제로는 GetAllBusTrackingInfo() 사용)
 	return buses
 }
 
@@ -116,17 +96,16 @@ func (s *TrackingService) GetBusInfo(plateNo string) (responses.BusInfoData, err
 	currentDate := s.busTracker.GetCurrentOperatingDate()
 	dailyTripCount := s.busTracker.GetBusTripCount(plateNo)
 
-	// 운행 시간 계산
+	// 운행 시간 계산 (공용 헬퍼 사용)
 	var tripDuration string
 	if !trackingInfo.TripStartTime.IsZero() {
 		duration := time.Since(trackingInfo.TripStartTime)
-		tripDuration = formatDuration(duration)
+		tripDuration = utils.Time.FormatDuration(duration) // 공용 헬퍼 사용
 	}
 
 	// tracker.BusTrackingInfo를 responses.BusTrackingInfo로 변환
-	// tracker.BusTrackingInfo의 실제 필드명에 맞춰 매핑
 	busInfo := responses.BusTrackingInfo{
-		PlateNo:          plateNo, // 파라미터로 받은 plateNo 사용
+		PlateNo:          plateNo,
 		RouteNm:          trackingInfo.RouteNm,
 		LastPosition:     trackingInfo.LastPosition,
 		PreviousPosition: trackingInfo.PreviousPosition,
@@ -204,7 +183,7 @@ func (s *TrackingService) GetTripStatistics() (responses.TripStatisticsData, err
 	lastResetTime := s.busTracker.GetLastResetTime()
 	dailyStats := s.busTracker.GetDailyTripStatistics()
 
-	// 통계 계산
+	// 통계 계산 (공용 헬퍼 사용)
 	var totalTrips, maxTrips, minTrips int
 	var activeVehicles int
 	minTrips = 999999 // 초기값을 큰 수로 설정
@@ -213,12 +192,8 @@ func (s *TrackingService) GetTripStatistics() (responses.TripStatisticsData, err
 		if tripCount > 0 {
 			activeVehicles++
 			totalTrips += tripCount
-			if tripCount > maxTrips {
-				maxTrips = tripCount
-			}
-			if tripCount < minTrips {
-				minTrips = tripCount
-			}
+			maxTrips = utils.Math.Max(maxTrips, tripCount) // 공용 헬퍼 사용
+			minTrips = utils.Math.Min(minTrips, tripCount) // 공용 헬퍼 사용
 		}
 	}
 
@@ -274,7 +249,7 @@ func (s *TrackingService) getTopPerformers(dailyStats map[string]int, limit int)
 		}
 	}
 
-	// 운행 차수 기준으로 정렬 (내림차순)
+	// 운행 차수 기준으로 정렬 (내림차순) - 간단한 버블 정렬
 	for i := 0; i < len(performers)-1; i++ {
 		for j := i + 1; j < len(performers); j++ {
 			if performers[i].TripCount < performers[j].TripCount {
@@ -432,17 +407,4 @@ func (s *TrackingService) GetRouteStatistics(routeId string) (map[string]interfa
 	}
 
 	return stats, nil
-}
-
-// formatDuration 기간을 사용자 친화적 형식으로 변환
-func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%d초", int(d.Seconds()))
-	} else if d < time.Hour {
-		return fmt.Sprintf("%d분", int(d.Minutes()))
-	} else {
-		hours := int(d.Hours())
-		minutes := int(d.Minutes()) % 60
-		return fmt.Sprintf("%d시간 %d분", hours, minutes)
-	}
 }

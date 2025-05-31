@@ -4,7 +4,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -37,8 +36,6 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 		len(cfg.API1Config.RouteIDs), len(cfg.API2Config.RouteIDs))
 	logger.Infof("API1 노선 IDs: %v", cfg.API1Config.RouteIDs)
 	logger.Infof("API2 노선 IDs: %v", cfg.API2Config.RouteIDs)
-	logger.Infof("API1 BaseURL: %s", cfg.API1Config.BaseURL)
-	logger.Infof("API2 BaseURL: %s", cfg.API2Config.BaseURL)
 
 	// 버스 트래킹 종료 조건 설정 확인
 	logger.Infof("버스 트래킹 종료 조건 - 미목격 시간: %v, 종점 도착 시 종료: %t",
@@ -72,8 +69,10 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 		api2RouteIDs = cfg.API2Config.RouteIDs
 	}
 
+	// 공용 헬퍼 사용으로 중복 제거된 노선 목록 생성
 	allRouteIDs := append(api1RouteIDs, api2RouteIDs...)
-	logger.Infof("전체 노선 IDs 통합: %v", allRouteIDs)
+	allRouteIDs = utils.Slice.RemoveDuplicateStrings(allRouteIDs)
+	logger.Infof("전체 노선 IDs 통합 (중복 제거 후): %v", allRouteIDs)
 
 	if len(allRouteIDs) > 0 {
 		if err := unifiedStationCache.LoadStationCache(allRouteIDs); err != nil {
@@ -166,7 +165,6 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 func runDailyOperatingScheduleWorker(cfg *config.Config, logger *utils.Logger, busTracker *tracker.BusTrackerWithDuplicateCheck) {
 	logger.Info("📅 일일 운영시간 관리 워커 시작")
 
-	// 1분마다 체크
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -178,26 +176,14 @@ func runDailyOperatingScheduleWorker(cfg *config.Config, logger *utils.Logger, b
 			now := time.Now()
 			currentDate := getDailyOperatingDate(now, cfg)
 
-			// 운영일자가 변경되었는지 체크
 			if lastCheckDate != "" && lastCheckDate != currentDate {
 				logger.Infof("📅 운영일자 변경 감지: %s -> %s", lastCheckDate, currentDate)
-
-				// 새로운 운영일 시작 - 일일 카운터 리셋
 				busTracker.ResetDailyTripCounters()
 				logger.Infof("🔄 일일 운행 차수 카운터 리셋 완료 (새 운영일: %s)", currentDate)
-
-				// 운영시간 정보 출력
-				if cfg.IsOperatingTime(now) {
-					logger.Infof("✅ 현재 운영시간 내 - 버스 트래킹 활성")
-				} else {
-					nextOperating := cfg.GetNextOperatingTime(now)
-					logger.Infof("⏸️ 현재 운영시간 외 - 다음 운영 시작: %s", nextOperating.Format("2006-01-02 15:04:05"))
-				}
 			}
 
 			lastCheckDate = currentDate
 
-			// 30분마다 현재 상태 로깅
 			if now.Minute()%30 == 0 && now.Second() < 5 {
 				operatingStatus := "운영시간 외"
 				if cfg.IsOperatingTime(now) {
@@ -216,25 +202,16 @@ func runDailyOperatingScheduleWorker(cfg *config.Config, logger *utils.Logger, b
 
 // getDailyOperatingDate 운영일자 계산 (운영시간 기준)
 func getDailyOperatingDate(now time.Time, cfg *config.Config) string {
-	// 현재 시간이 운영 종료 시간 이후이고 다음 운영 시작 시간 이전이면 전날로 계산
 	if !cfg.IsOperatingTime(now) {
 		nextOperatingTime := cfg.GetNextOperatingTime(now)
-
-		// 다음 운영 시간이 다음날이면 현재는 전날 운영일자
 		if nextOperatingTime.Day() != now.Day() {
 			return now.AddDate(0, 0, -1).Format("2006-01-02")
 		}
 	}
-
 	return now.Format("2006-01-02")
 }
 
 // getWebPort 웹 서버 포트 가져오기 (환경변수 또는 기본값)
 func getWebPort() int {
-	if port := os.Getenv("WEB_PORT"); port != "" {
-		if p, err := strconv.Atoi(port); err == nil && p > 0 {
-			return p
-		}
-	}
-	return 8080 // 기본 포트
+	return utils.Convert.StringToInt(os.Getenv("WEB_PORT"), 8080)
 }

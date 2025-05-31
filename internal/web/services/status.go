@@ -1,4 +1,4 @@
-// internal/web/services/status_service.go
+// internal/web/services/status.go - 공용 헬퍼 사용으로 수정
 package services
 
 import (
@@ -47,7 +47,7 @@ func (s *StatusService) GetSystemStatus() (responses.StatusData, error) {
 
 	statusData := responses.StatusData{
 		Status:              "running",
-		Uptime:              s.calculateUptime(lastResetTime),
+		Uptime:              utils.Time.CalculateUptime(lastResetTime), // 공용 헬퍼 사용
 		Version:             "1.0.0",
 		Mode:                "unified",
 		OperatingTime:       s.config.IsOperatingTime(now),
@@ -99,7 +99,7 @@ func (s *StatusService) GetStatistics() (responses.StatisticsData, error) {
 		},
 		SystemMetrics: responses.SystemMetrics{
 			MemoryUsage: fmt.Sprintf("%.2f MB", float64(m.Alloc)/1024/1024),
-			Uptime:      s.calculateUptime(s.busTracker.GetLastResetTime()),
+			Uptime:      utils.Time.CalculateUptime(s.busTracker.GetLastResetTime()), // 공용 헬퍼 사용
 		},
 	}
 
@@ -173,7 +173,7 @@ func (s *StatusService) GetSystemMetrics() (map[string]interface{}, error) {
 			"numGC":      m.NumGC,
 		},
 		"goroutines": runtime.NumGoroutine(),
-		"uptime":     s.calculateUptime(s.busTracker.GetLastResetTime()),
+		"uptime":     utils.Time.CalculateUptime(s.busTracker.GetLastResetTime()), // 공용 헬퍼 사용
 		"timestamp":  time.Now(),
 	}
 
@@ -260,7 +260,7 @@ func (s *StatusService) GetNotifications(page, limit int) ([]map[string]interfac
 // CreateNotification 알림 생성 (모의 구현)
 func (s *StatusService) CreateNotification(title, message, notificationType string, priority int) (map[string]interface{}, error) {
 	notification := map[string]interface{}{
-		"id":        fmt.Sprintf("%d", time.Now().UnixNano()),
+		"id":        utils.ID.GenerateRequestID(), // 공용 헬퍼 사용
 		"title":     title,
 		"message":   message,
 		"type":      notificationType,
@@ -298,27 +298,4 @@ func (s *StatusService) UpdateNotification(id, title, message, notificationType 
 func (s *StatusService) DeleteNotification(id string) error {
 	s.logger.Infof("알림 삭제: %s", id)
 	return nil
-}
-
-// calculateUptime 업타임 계산
-func (s *StatusService) calculateUptime(startTime time.Time) string {
-	if startTime.IsZero() {
-		return "정보 없음"
-	}
-
-	duration := time.Since(startTime)
-
-	if duration < time.Minute {
-		return fmt.Sprintf("%d초", int(duration.Seconds()))
-	} else if duration < time.Hour {
-		return fmt.Sprintf("%d분", int(duration.Minutes()))
-	} else if duration < 24*time.Hour {
-		hours := int(duration.Hours())
-		minutes := int(duration.Minutes()) % 60
-		return fmt.Sprintf("%d시간 %d분", hours, minutes)
-	} else {
-		days := int(duration.Hours()) / 24
-		hours := int(duration.Hours()) % 24
-		return fmt.Sprintf("%d일 %d시간", days, hours)
-	}
 }

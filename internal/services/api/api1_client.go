@@ -1,3 +1,4 @@
+// internal/services/api/api1_client.go - 공용 헬퍼 사용으로 수정
 package api
 
 import (
@@ -40,17 +41,15 @@ func (ac *API1Client) GetAPIType() string {
 	return "api1"
 }
 
-// validateAPI1RouteID API1 Route ID 형식 검증
+// validateAPI1RouteID API1 Route ID 형식 검증 (공용 헬퍼 사용)
 func (ac *API1Client) validateAPI1RouteID(routeID string) error {
-	if routeID == "" {
+	if utils.Validate.IsEmpty(routeID) {
 		return fmt.Errorf("routeID가 비어있습니다")
 	}
 
-	// API1은 숫자만 허용
-	for _, char := range routeID {
-		if char < '0' || char > '9' {
-			return fmt.Errorf("API1 routeID는 숫자만 허용됩니다: '%s'", routeID)
-		}
+	// API1은 숫자만 허용 (공용 헬퍼 사용)
+	if !utils.Validate.IsInteger(routeID) {
+		return fmt.Errorf("API1 routeID는 숫자만 허용됩니다: '%s'", routeID)
 	}
 
 	return nil
@@ -65,7 +64,7 @@ func (ac *API1Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 
 	// URL 생성
 	apiURL := ac.buildAPIURL(routeID)
-	ac.logger.Infof("API1 호출 URL: %s", utils.MaskSensitiveURL(apiURL, ac.config.ServiceKey))
+	ac.logger.Infof("API1 호출 URL: %s", utils.String.MaskSensitiveURL(apiURL, ac.config.ServiceKey)) // 공용 헬퍼 사용
 
 	resp, err := ac.client.Get(apiURL)
 	if err != nil {
@@ -127,11 +126,11 @@ func (ac *API1Client) FetchAllBusLocations(routeIDs []string) ([]models.BusLocat
 		return nil, fmt.Errorf("routeIDs가 비어있습니다")
 	}
 
-	// Route ID 형식 사전 검증
+	// Route ID 형식 사전 검증 (공용 헬퍼 사용)
 	for _, routeID := range routeIDs {
-		if err := ac.validateAPI1RouteID(routeID); err != nil {
-			ac.logger.Errorf("Route ID 형식 검증 실패: %v", err)
-			return nil, fmt.Errorf("Route ID 형식 검증 실패: %v", err)
+		if !utils.Validate.IsValidRouteID(routeID, "api1") {
+			ac.logger.Errorf("Route ID 형식 검증 실패: %s", routeID)
+			return nil, fmt.Errorf("Route ID 형식 검증 실패: %s", routeID)
 		}
 	}
 
@@ -191,7 +190,7 @@ func (ac *API1Client) FetchAllBusLocations(routeIDs []string) ([]models.BusLocat
 	return allBusLocations, nil
 }
 
-// buildAPIURL API1용 URL 생성
+// buildAPIURL API1용 URL 생성 (공용 헬퍼 사용)
 func (ac *API1Client) buildAPIURL(routeID string) string {
 	params := []string{
 		"serviceKey=" + ac.config.ServiceKey,
@@ -201,10 +200,10 @@ func (ac *API1Client) buildAPIURL(routeID string) string {
 
 	baseURL := ac.config.API1Config.BaseURL
 	if len(params) > 0 {
-		if utils.Contains(baseURL, "?") {
-			return baseURL + "&" + utils.JoinStrings(params, "&")
+		if utils.String.Contains(baseURL, "?") { // 공용 헬퍼 사용
+			return baseURL + "&" + utils.String.Join(params, "&") // 공용 헬퍼 사용
 		}
-		return baseURL + "?" + utils.JoinStrings(params, "&")
+		return baseURL + "?" + utils.String.Join(params, "&") // 공용 헬퍼 사용
 	}
 	return baseURL
 }
@@ -215,10 +214,10 @@ func (ac *API1Client) LoadStationCache(routeIDs []string) error {
 		return fmt.Errorf("routeIDs가 비어있습니다")
 	}
 
-	// Route ID 형식 검증
+	// Route ID 형식 검증 (공용 헬퍼 사용)
 	for _, routeID := range routeIDs {
-		if err := ac.validateAPI1RouteID(routeID); err != nil {
-			return fmt.Errorf("정류소 캐시 로딩 중 Route ID 검증 실패: %v", err)
+		if !utils.Validate.IsValidRouteID(routeID, "api1") {
+			return fmt.Errorf("정류소 캐시 로딩 중 Route ID 검증 실패: %s", routeID)
 		}
 	}
 

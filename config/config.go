@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
-	"strings"
 	"time"
+
+	"bus-tracker/internal/utils"
 
 	"github.com/joho/godotenv"
 )
@@ -119,7 +119,7 @@ func LoadConfig() *Config {
 
 // Validate 설정 유효성 검증
 func (c *Config) Validate() error {
-	if c.ServiceKey == "" {
+	if utils.Validate.IsEmpty(c.ServiceKey) {
 		return fmt.Errorf("SERVICE_KEY가 설정되지 않았습니다. 환경변수를 확인해주세요")
 	}
 
@@ -140,80 +140,103 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("API1과 API2 모두 노선이 설정되지 않았습니다. 최소 하나의 API에는 노선을 설정해야 합니다")
 	}
 
+	// API1 노선 검증
+	for _, routeID := range c.API1Config.RouteIDs {
+		if !utils.Validate.IsValidRouteID(routeID, "api1") {
+			return fmt.Errorf("API1 노선 ID 형식이 올바르지 않습니다: %s", routeID)
+		}
+	}
+
+	// API2 노선 검증
+	for _, routeID := range c.API2Config.RouteIDs {
+		if !utils.Validate.IsValidRouteID(routeID, "api2") {
+			return fmt.Errorf("API2 노선 ID 형식이 올바르지 않습니다: %s", routeID)
+		}
+	}
+
 	return nil
 }
 
+// 환경변수 헬퍼 함수들 - 공용 헬퍼 사용
+
 // getEnv 환경변수 값을 가져오거나 기본값 반환
 func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+	if value := os.Getenv(key); !utils.Validate.IsEmpty(value) {
+		return utils.String.TrimSpace(value)
 	}
 	return defaultValue
 }
 
-// getIntEnv 환경변수에서 정수값을 가져오거나 기본값 반환
+// getIntEnv 환경변수에서 정수값을 가져오거나 기본값 반환 (공용 헬퍼 사용)
 func getIntEnv(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
+	value := utils.String.TrimSpace(os.Getenv(key))
+	result := utils.Convert.StringToInt(value, defaultValue)
+
+	if value != "" && result == defaultValue {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d를 사용합니다.", key, defaultValue)
 	}
-	return defaultValue
+
+	return result
 }
 
-// getBoolEnv 환경변수에서 불린값을 가져오거나 기본값 반환
+// getBoolEnv 환경변수에서 불린값을 가져오거나 기본값 반환 (공용 헬퍼 사용)
 func getBoolEnv(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		if boolValue, err := strconv.ParseBool(value); err == nil {
-			return boolValue
-		}
+	value := utils.String.TrimSpace(os.Getenv(key))
+	result := utils.Convert.StringToBool(value, defaultValue)
+
+	if value != "" && result == defaultValue {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %t를 사용합니다.", key, defaultValue)
 	}
-	return defaultValue
+
+	return result
 }
 
-// getRouteIDList 환경변수에서 RouteID 리스트 파싱
+// getRouteIDList 환경변수에서 RouteID 리스트 파싱 (공용 헬퍼 사용)
 func getRouteIDList(key string) []string {
-	routeIDsEnv := getEnv(key, "")
+	routeIDsEnv := utils.String.TrimSpace(getEnv(key, ""))
 
-	if routeIDsEnv == "" {
+	if utils.Validate.IsEmpty(routeIDsEnv) {
 		return []string{}
 	}
 
-	// 쉼표로 분리하고 공백 제거
-	routeIDs := strings.Split(routeIDsEnv, ",")
-	var cleanRouteIDs []string
+	// 쉼표로 분리하고 공백 제거 (공용 헬퍼 사용)
+	routeIDs := utils.String.Split(routeIDsEnv, ",")
 
+	// 빈 문자열 제거 및 공백 정리 (공용 헬퍼 사용)
+	var cleanRouteIDs []string
 	for _, id := range routeIDs {
-		cleanID := strings.TrimSpace(id)
-		if cleanID != "" {
+		cleanID := utils.String.TrimSpace(id)
+		if !utils.Validate.IsEmpty(cleanID) {
 			cleanRouteIDs = append(cleanRouteIDs, cleanID)
 		}
 	}
 
-	return cleanRouteIDs
+	// 중복 제거 (공용 헬퍼 사용)
+	return utils.Slice.RemoveDuplicateStrings(cleanRouteIDs)
 }
 
-// getDuration 환경변수에서 duration 파싱
+// getDuration 환경변수에서 duration 파싱 (공용 헬퍼 사용)
 func getDuration(key string, defaultSeconds int) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if seconds, err := strconv.Atoi(value); err == nil {
-			return time.Duration(seconds) * time.Second
-		}
+	value := utils.String.TrimSpace(os.Getenv(key))
+	result := utils.Time.ParseDurationSeconds(value, defaultSeconds)
+
+	if value != "" && result == time.Duration(defaultSeconds)*time.Second {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d초를 사용합니다.", key, defaultSeconds)
 	}
-	return time.Duration(defaultSeconds) * time.Second
+
+	return result
 }
 
+// getDurationMinutes 환경변수에서 분 단위 duration 파싱 (공용 헬퍼 사용)
 func getDurationMinutes(key string, defaultMinutes int) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if minutes, err := strconv.Atoi(value); err == nil {
-			return time.Duration(minutes) * time.Minute
-		}
+	value := utils.String.TrimSpace(os.Getenv(key))
+	result := utils.Time.ParseDurationMinutes(value, defaultMinutes)
+
+	if value != "" && result == time.Duration(defaultMinutes)*time.Minute {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d분을 사용합니다.", key, defaultMinutes)
 	}
-	return time.Duration(defaultMinutes) * time.Minute
+
+	return result
 }
 
 // IsOperatingTime 현재 시간이 운영 시간인지 확인
@@ -269,11 +292,9 @@ func (c *Config) GetNextOperatingTime(currentTime time.Time) time.Time {
 func (c *Config) PrintConfig() {
 	log.Println("=== 버스 트래커 설정 (통합 모드) ===")
 
-	if len(c.ServiceKey) >= 10 {
-		log.Printf("Service Key: %s***", c.ServiceKey[:10])
-	} else {
-		log.Printf("Service Key: %s***", c.ServiceKey)
-	}
+	// ServiceKey 마스킹 (공용 헬퍼 사용)
+	maskedServiceKey := utils.String.MaskSensitive(c.ServiceKey, 10, 4)
+	log.Printf("Service Key: %s", maskedServiceKey)
 
 	log.Printf("City Code: %s", c.CityCode)
 	log.Printf("Elasticsearch URL: %s", c.ElasticsearchURL)
@@ -291,33 +312,83 @@ func (c *Config) PrintConfig() {
 	log.Printf("정리 작업 주기: %v", c.BusCleanupInterval)
 
 	// API1 설정
-	log.Printf("API1 - 주기: %v, 노선수: %d개",
-		c.API1Config.Interval, len(c.API1Config.RouteIDs))
+	log.Printf("=== API1 설정 ===")
+	log.Printf("주기: %v, 노선수: %d개", c.API1Config.Interval, len(c.API1Config.RouteIDs))
 	if len(c.API1Config.RouteIDs) > 0 {
-		log.Printf("  API1 노선들: %v", c.API1Config.RouteIDs)
+		log.Printf("노선들: %v", c.API1Config.RouteIDs)
 	}
+	log.Printf("Base URL: %s", c.API1Config.BaseURL)
+	log.Printf("우선순위: %d", c.API1Config.Priority)
 
 	// API2 설정
-	log.Printf("API2 - 주기: %v, 노선수: %d개",
-		c.API2Config.Interval, len(c.API2Config.RouteIDs))
+	log.Printf("=== API2 설정 ===")
+	log.Printf("주기: %v, 노선수: %d개", c.API2Config.Interval, len(c.API2Config.RouteIDs))
 	if len(c.API2Config.RouteIDs) > 0 {
-		log.Printf("  API2 노선들: %v", c.API2Config.RouteIDs)
+		log.Printf("노선들: %v", c.API2Config.RouteIDs)
 	}
+	log.Printf("Base URL: %s", c.API2Config.BaseURL)
+	log.Printf("우선순위: %d", c.API2Config.Priority)
 
-	// 공통 설정
-	// 공통 설정
+	// 운영 시간 설정
+	log.Printf("=== 운영 시간 설정 ===")
 	log.Printf("운영 시간: %02d:%02d ~ %02d:%02d",
 		c.OperatingStartHour, c.OperatingStartMinute, c.OperatingEndHour, c.OperatingEndMinute)
 
 	// Elasticsearch 설정
 	log.Printf("=== Elasticsearch 설정 ===")
 	log.Printf("URL: %s", c.ElasticsearchURL)
-	if c.ElasticsearchUsername != "" {
-		log.Printf("인증: %s / ***", c.ElasticsearchUsername)
+	if !utils.Validate.IsEmpty(c.ElasticsearchUsername) {
+		maskedUsername := utils.String.MaskSensitive(c.ElasticsearchUsername, 2, 2)
+		log.Printf("인증: %s / ***", maskedUsername)
 	} else {
 		log.Printf("인증: 없음")
 	}
 	log.Printf("인덱스: %s", c.IndexName)
 
-	log.Println("========================")
+	// 설정 검증 상태
+	log.Printf("=== 설정 검증 상태 ===")
+	if err := c.Validate(); err != nil {
+		log.Printf("❌ 검증 실패: %v", err)
+	} else {
+		log.Printf("✅ 모든 설정이 유효합니다")
+	}
+
+	log.Println("====================================")
+}
+
+// GetConfigSummary 설정 요약 정보 반환 (웹 API용)
+func (c *Config) GetConfigSummary() map[string]interface{} {
+	return map[string]interface{}{
+		"serviceKey": map[string]interface{}{
+			"configured": !utils.Validate.IsEmpty(c.ServiceKey),
+			"masked":     utils.String.MaskSensitive(c.ServiceKey, 6, 4),
+		},
+		"apis": map[string]interface{}{
+			"api1": map[string]interface{}{
+				"enabled":    len(c.API1Config.RouteIDs) > 0,
+				"routeCount": len(c.API1Config.RouteIDs),
+				"interval":   c.API1Config.Interval.String(),
+			},
+			"api2": map[string]interface{}{
+				"enabled":    len(c.API2Config.RouteIDs) > 0,
+				"routeCount": len(c.API2Config.RouteIDs),
+				"interval":   c.API2Config.Interval.String(),
+			},
+		},
+		"elasticsearch": map[string]interface{}{
+			"url":       c.ElasticsearchURL,
+			"hasAuth":   !utils.Validate.IsEmpty(c.ElasticsearchUsername),
+			"indexName": c.IndexName,
+		},
+		"operatingTime": map[string]interface{}{
+			"start":    fmt.Sprintf("%02d:%02d", c.OperatingStartHour, c.OperatingStartMinute),
+			"end":      fmt.Sprintf("%02d:%02d", c.OperatingEndHour, c.OperatingEndMinute),
+			"is24Hour": c.OperatingStartHour == c.OperatingEndHour && c.OperatingStartMinute == c.OperatingEndMinute,
+		},
+		"tracking": map[string]interface{}{
+			"disappearanceTimeout": c.BusDisappearanceTimeout.String(),
+			"enableTerminalStop":   c.EnableTerminalStop,
+			"cleanupInterval":      c.BusCleanupInterval.String(),
+		},
+	}
 }

@@ -1,4 +1,4 @@
-// internal/services/storage/duplicate_checker.go
+// internal/services/storage/duplicate_checker.go - 공용 헬퍼 사용으로 수정
 package storage
 
 import (
@@ -131,13 +131,13 @@ func (edc *ElasticsearchDuplicateChecker) GetRecentBusData(lookbackMinutes int) 
 			}
 		}
 
-		// 각 필드 안전하게 추출
+		// 각 필드 안전하게 추출 (공용 헬퍼 사용)
 		busData := &BusLastData{
 			PlateNo:    plateNo,
-			StationSeq: getIntFromInterface(source["stationSeq"]),
-			NodeOrd:    getIntFromInterface(source["nodeOrd"]),
-			StationId:  getInt64FromInterface(source["stationId"]),
-			NodeId:     getStringFromInterface(source["nodeId"]),
+			StationSeq: utils.Convert.InterfaceToInt(source["stationSeq"]),
+			NodeOrd:    utils.Convert.InterfaceToInt(source["nodeOrd"]),
+			StationId:  utils.Convert.InterfaceToInt64(source["stationId"]),
+			NodeId:     utils.Convert.InterfaceToString(source["nodeId"]),
 			LastUpdate: lastUpdate,
 		}
 
@@ -190,36 +190,4 @@ type SearchResponse struct {
 			} `json:"buckets"`
 		} `json:"buses"`
 	} `json:"aggregations"`
-}
-
-// 유틸리티 함수들
-func getStringFromInterface(value interface{}) string {
-	if str, ok := value.(string); ok {
-		return str
-	}
-	return ""
-}
-
-func getIntFromInterface(value interface{}) int {
-	switch v := value.(type) {
-	case int:
-		return v
-	case float64:
-		return int(v)
-	case int64:
-		return int(v)
-	}
-	return 0
-}
-
-func getInt64FromInterface(value interface{}) int64 {
-	switch v := value.(type) {
-	case int64:
-		return v
-	case int:
-		return int64(v)
-	case float64:
-		return int64(v)
-	}
-	return 0
 }
