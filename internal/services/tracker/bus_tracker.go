@@ -22,23 +22,31 @@ type BusTrackingInfo struct {
 	TotalStations    int       // 전체 정류소 개수
 	IsTerminated     bool      // 종료 상태 플래그
 	TripNumber       int       // 운행 차수
+	TripStartTime    time.Time // 해당 차수 시작 시간
 }
 
 // BusTracker 버스별 마지막 정류장 정보를 추적하는 서비스
 type BusTracker struct {
-	config        *config.Config
-	busInfoMap    map[string]*BusTrackingInfo // key: plateNo, value: 추적 정보
-	mutex         sync.RWMutex
-	tripCounters  map[string]int // 차량별 운행 차수 카운터 (key: plateNo)
-	countersMutex sync.RWMutex
+	config            *config.Config
+	busInfoMap        map[string]*BusTrackingInfo // key: plateNo, value: 추적 정보
+	mutex             sync.RWMutex
+	dailyTripCounters map[string]int // 차량별 일일 운행 차수 카운터 (key: plateNo)
+	countersMutex     sync.RWMutex
+	currentDate       string    // 현재 운영일자 (YYYY-MM-DD 형식)
+	lastResetTime     time.Time // 마지막 리셋 시간
 }
 
 // NewBusTracker 새로운 BusTracker 생성
 func NewBusTracker(cfg *config.Config) *BusTracker {
+	now := time.Now()
+	currentDate := getDailyOperatingDate(now, cfg)
+
 	return &BusTracker{
-		config:       cfg,
-		busInfoMap:   make(map[string]*BusTrackingInfo),
-		tripCounters: make(map[string]int),
+		config:            cfg,
+		busInfoMap:        make(map[string]*BusTrackingInfo),
+		dailyTripCounters: make(map[string]int),
+		currentDate:       currentDate,
+		lastResetTime:     now,
 	}
 }
 
@@ -61,39 +69,95 @@ func NewBusTrackerWithDuplicateCheck(cfg *config.Config, duplicateChecker *stora
 	}
 }
 
+// getDailyOperatingDate 운영일자 계산 (운영시간 기준)
+// 예: 04:55~01:00 운영시간의 경우, 새벽 1:30은 전날 운영일자에 속함
+func getDailyOperatingDate(now time.Time, cfg *config.Config) string {
+	// 현재 시간이 운영 종료 시간 이후이고 다음 운영 시작 시간 이전이면 전날로 계산
+	if !cfg.IsOperatingTime(now) {
+		nextOperatingTime := cfg.GetNextOperatingTime(now)
+
+		// 다음 운영 시간이 다음날이면 현재는 전날 운영일자
+		if nextOperatingTime.Day() != now.Day() {
+			return now.AddDate(0, 0, -1).Format("2006-01-02")
+		}
+	}
+
+	return now.Format("2006-01-02")
+}
+
+// checkAndResetDailyCounters 일일 카운터 리셋 확인
+func (bt *BusTracker) checkAndResetDailyCounters(now time.Time) {
+	bt.countersMutex.Lock()
+	defer bt.countersMutex.Unlock()
+
+	newDate := getDailyOperatingDate(now, bt.config)
+
+	// 운영일자가 변경되었으면 카운터 리셋
+	if newDate != bt.currentDate {
+		bt.dailyTripCounters = make(map[string]int)
+		bt.currentDate = newDate
+		bt.lastResetTime = now
+
+		// 기존 추적 정보의 종료 상태도 모두 리셋 (새로운 날 시작)
+		//bt.mutex.Lock()
+		//for plateNo, info := range bt.busInfoMap {
+		//	if info.IsTerminated {
+		//		info.IsTerminated = false
+		//		info.TripNumber = 0 // 새로운 날이므로 차수도 리셋
+		//	}
+		//}
+		bt.mutex.Unlock()
+	}
+}
+
+// getNextTripNumber 다음 운행 차수 반환 (일일 기준)
+func (bt *BusTracker) getNextTripNumber(plateNo string) int {
+	bt.countersMutex.Lock()
+	defer bt.countersMutex.Unlock()
+
+	bt.dailyTripCounters[plateNo]++
+	return bt.dailyTripCounters[plateNo]
+}
+
 // IsStationChanged 정류장 변경 여부 확인 및 상태 업데이트
 func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, routeNm string, totalStations int) (bool, int) {
+	now := time.Now()
+
+	// 일일 카운터 리셋 확인
+	bt.checkAndResetDailyCounters(now)
+
 	bt.mutex.Lock()
 	defer bt.mutex.Unlock()
 
 	info, exists := bt.busInfoMap[plateNo]
 
 	if !exists {
-		// 새로운 버스 - 운행 차수 할당 (해당 차량의 첫 번째 운행)
+		// 새로운 버스 - 일일 운행 차수 할당
 		tripNumber := bt.getNextTripNumber(plateNo)
 
 		bt.busInfoMap[plateNo] = &BusTrackingInfo{
 			LastPosition:  currentPosition,
-			LastSeenTime:  time.Now(),
+			LastSeenTime:  now,
 			StartPosition: currentPosition,
 			RouteNm:       routeNm,
 			TotalStations: totalStations,
 			IsTerminated:  false,
 			TripNumber:    tripNumber,
+			TripStartTime: now,
 		}
 		return true, tripNumber
 	}
 
 	// 종료된 버스가 다시 나타난 경우 (새로운 운행 시작)
 	if info.IsTerminated {
-		// 🔧 간소화: 종료된 버스가 다시 나타나면 무조건 새로운 운행으로 간주
 		tripNumber := bt.getNextTripNumber(plateNo)
 		info.LastPosition = currentPosition
 		info.PreviousPosition = 0
-		info.LastSeenTime = time.Now()
+		info.LastSeenTime = now
 		info.StartPosition = currentPosition
 		info.IsTerminated = false
 		info.TripNumber = tripNumber
+		info.TripStartTime = now
 		info.RouteNm = routeNm
 		return true, tripNumber
 	}
@@ -102,22 +166,13 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ro
 	if info.LastPosition != currentPosition {
 		info.PreviousPosition = info.LastPosition
 		info.LastPosition = currentPosition
-		info.LastSeenTime = time.Now()
+		info.LastSeenTime = now
 		return true, info.TripNumber
 	}
 
 	// 위치는 동일하지만 마지막 목격 시간은 업데이트
-	info.LastSeenTime = time.Now()
+	info.LastSeenTime = now
 	return false, info.TripNumber
-}
-
-// getNextTripNumber 다음 운행 차수 반환 (차량별 관리)
-func (bt *BusTracker) getNextTripNumber(plateNo string) int {
-	bt.countersMutex.Lock()
-	defer bt.countersMutex.Unlock()
-
-	bt.tripCounters[plateNo]++
-	return bt.tripCounters[plateNo]
 }
 
 // TerminateBusTracking 버스 운행 종료 처리
@@ -134,8 +189,9 @@ func (bt *BusTracker) TerminateBusTracking(plateNo string, reason string, logger
 	info.IsTerminated = true
 
 	if logger != nil {
-		logger.Infof("버스 운행 종료 - 차량번호: %s, 노선: %s, %d차수 완료, 이유: %s",
-			plateNo, info.RouteNm, info.TripNumber, reason)
+		operatingDate := getDailyOperatingDate(time.Now(), bt.config)
+		logger.Infof("버스 운행 종료 - 차량번호: %s, 노선: %s, %s %d차수 완료, 이유: %s",
+			plateNo, info.RouteNm, operatingDate, info.TripNumber, reason)
 	}
 
 	return true
@@ -160,7 +216,7 @@ func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, l
 
 		routeNm := bus.GetRouteIDString() // RouteNm 우선, 없으면 RouteId
 
-		// 🔧 새로운 종료 조건 1: 종점 도착 시 종료 (config에서 활성화된 경우만)
+		// 종점 도착 시 종료 (config에서 활성화된 경우만)
 		if bt.config.EnableTerminalStop && bt.shouldTerminateAtTerminal(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
 			bt.TerminateBusTracking(bus.PlateNo, "종점 도달", logger)
 			// 종료된 버스도 한 번은 ES에 전송 (종료 표시를 위해)
@@ -203,7 +259,7 @@ func (bt *BusTrackerWithDuplicateCheck) FilterChangedStationsWithDuplicateCheck(
 
 		routeNm := bus.GetRouteIDString() // RouteNm 우선, 없으면 RouteId
 
-		// 🔧 새로운 종료 조건 1: 종점 도착 시 종료 (config에서 활성화된 경우만)
+		// 종점 도착 시 종료 (config에서 활성화된 경우만)
 		if bt.BusTracker.config.EnableTerminalStop && bt.BusTracker.shouldTerminateAtTerminal(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
 			bt.BusTracker.TerminateBusTracking(bus.PlateNo, "종점 도달", logger)
 			// 종료된 버스도 한 번은 ES에 전송 (종료 표시를 위해)
@@ -271,6 +327,11 @@ func (bt *BusTrackerWithDuplicateCheck) loadRecentESDataForDuplicateCheck(logger
 
 // isStationChangedWithDuplicateCheck 중복 체크를 포함한 정류장 변경 확인
 func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plateNo string, currentPosition int64, routeNm string, totalStations int, bus models.BusLocation, logger *utils.Logger) (bool, int) {
+	now := time.Now()
+
+	// 일일 카운터 리셋 확인
+	bt.BusTracker.checkAndResetDailyCounters(now)
+
 	bt.BusTracker.mutex.Lock()
 	defer bt.BusTracker.mutex.Unlock()
 
@@ -290,12 +351,13 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 					tripNumber := bt.BusTracker.getNextTripNumber(plateNo)
 					bt.BusTracker.busInfoMap[plateNo] = &BusTrackingInfo{
 						LastPosition:  currentPosition,
-						LastSeenTime:  time.Now(),
+						LastSeenTime:  now,
 						StartPosition: currentPosition,
 						RouteNm:       routeNm,
 						TotalStations: totalStations,
 						IsTerminated:  false,
 						TripNumber:    tripNumber,
+						TripStartTime: now,
 					}
 					return false, tripNumber // 중복이므로 ES 전송하지 않음
 				} else {
@@ -305,30 +367,31 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 			}
 		}
 
-		// 새로운 버스 또는 중복이 아닌 경우 - 운행 차수 할당
+		// 새로운 버스 또는 중복이 아닌 경우 - 일일 운행 차수 할당
 		tripNumber := bt.BusTracker.getNextTripNumber(plateNo)
 		bt.BusTracker.busInfoMap[plateNo] = &BusTrackingInfo{
 			LastPosition:  currentPosition,
-			LastSeenTime:  time.Now(),
+			LastSeenTime:  now,
 			StartPosition: currentPosition,
 			RouteNm:       routeNm,
 			TotalStations: totalStations,
 			IsTerminated:  false,
 			TripNumber:    tripNumber,
+			TripStartTime: now,
 		}
 		return true, tripNumber
 	}
 
 	// 종료된 버스가 다시 나타난 경우 (새로운 운행 시작)
 	if info.IsTerminated {
-		// 🔧 간소화: 종료된 버스가 다시 나타나면 무조건 새로운 운행으로 간주
 		tripNumber := bt.BusTracker.getNextTripNumber(plateNo)
 		info.LastPosition = currentPosition
 		info.PreviousPosition = 0
-		info.LastSeenTime = time.Now()
+		info.LastSeenTime = now
 		info.StartPosition = currentPosition
 		info.IsTerminated = false
 		info.TripNumber = tripNumber
+		info.TripStartTime = now
 		info.RouteNm = routeNm
 		return true, tripNumber
 	}
@@ -337,16 +400,16 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 	if info.LastPosition != currentPosition {
 		info.PreviousPosition = info.LastPosition
 		info.LastPosition = currentPosition
-		info.LastSeenTime = time.Now()
+		info.LastSeenTime = now
 		return true, info.TripNumber
 	}
 
 	// 위치는 동일하지만 마지막 목격 시간은 업데이트
-	info.LastSeenTime = time.Now()
+	info.LastSeenTime = now
 	return false, info.TripNumber
 }
 
-// 🔧 새로운 종료 조건 1: 종점 도착 시 종료
+// shouldTerminateAtTerminal 종점 도착 시 종료
 func (bt *BusTracker) shouldTerminateAtTerminal(plateNo string, currentPosition, totalStations int64) bool {
 	if totalStations <= 0 {
 		return false
@@ -356,7 +419,7 @@ func (bt *BusTracker) shouldTerminateAtTerminal(plateNo string, currentPosition,
 	return currentPosition >= totalStations
 }
 
-// 🔧 새로운 종료 조건 2: 버스 미목격 시간 초과로 정리
+// CleanupMissingBuses 버스 미목격 시간 초과로 정리
 func (bt *BusTracker) CleanupMissingBuses(logger *utils.Logger) int {
 	bt.mutex.Lock()
 	defer bt.mutex.Unlock()
@@ -368,15 +431,16 @@ func (bt *BusTracker) CleanupMissingBuses(logger *utils.Logger) int {
 	for plateNo, info := range bt.busInfoMap {
 		timeSinceLastSeen := now.Sub(info.LastSeenTime)
 
-		// 🔧 새로운 종료 조건 2: config에서 설정한 시간만큼 미목격시 종료
+		// config에서 설정한 시간만큼 미목격시 종료
 		if timeSinceLastSeen > bt.config.BusDisappearanceTimeout {
 			if !info.IsTerminated {
 				// 아직 종료되지 않은 버스는 종료 처리
 				info.IsTerminated = true
 				terminatedBuses = append(terminatedBuses, plateNo)
 				if logger != nil {
-					logger.Infof("버스 운행 종료 - 차량번호: %s, 노선: %s, %d차수 완료, 이유: %v 미목격",
-						plateNo, info.RouteNm, info.TripNumber, timeSinceLastSeen.Round(time.Minute))
+					operatingDate := getDailyOperatingDate(now, bt.config)
+					logger.Infof("버스 운행 종료 - 차량번호: %s, 노선: %s, %s %d차수 완료, 이유: %v 미목격",
+						plateNo, info.RouteNm, operatingDate, info.TripNumber, timeSinceLastSeen.Round(time.Minute))
 				}
 			} else {
 				// 이미 종료된 버스는 메모리에서 완전 제거 (추가 5분 후)
@@ -425,11 +489,16 @@ func (bt *BusTracker) GetBusTrackingInfo(plateNo string) (*BusTrackingInfo, bool
 
 // UpdateLastSeenTime 마지막 목격 시간 업데이트
 func (bt *BusTracker) UpdateLastSeenTime(plateNo string) {
+	now := time.Now()
+
+	// 일일 카운터 리셋 확인
+	bt.checkAndResetDailyCounters(now)
+
 	bt.mutex.Lock()
 	defer bt.mutex.Unlock()
 
 	if info, exists := bt.busInfoMap[plateNo]; exists {
-		info.LastSeenTime = time.Now()
+		info.LastSeenTime = now
 	}
 }
 
@@ -469,23 +538,42 @@ func (bt *BusTracker) GetPreviousPosition(plateNo string) (int64, bool) {
 	return 0, false
 }
 
-// ResetTripCounters 운행 차수 카운터 초기화 (일일 운영시간 시작 시 호출)
-func (bt *BusTracker) ResetTripCounters() {
+// ResetDailyTripCounters 일일 운행 차수 카운터 수동 리셋
+func (bt *BusTracker) ResetDailyTripCounters() {
+	now := time.Now()
+
 	bt.countersMutex.Lock()
 	defer bt.countersMutex.Unlock()
 
-	// 전체 차량의 운행 차수 카운터 초기화 (새로운 날 시작)
-	bt.tripCounters = make(map[string]int)
+	// 일일 차량 운행 차수 카운터 초기화
+	bt.dailyTripCounters = make(map[string]int)
+	bt.currentDate = getDailyOperatingDate(now, bt.config)
+	bt.lastResetTime = now
+
+	// 기존 추적 정보의 종료 상태도 모두 리셋 (새로운 날 시작)
+	bt.mutex.Lock()
+	for _, info := range bt.busInfoMap {
+		if info.IsTerminated {
+			info.IsTerminated = false
+			info.TripNumber = 0 // 새로운 날이므로 차수도 리셋
+		}
+	}
+	bt.mutex.Unlock()
 }
 
 // GetDailyTripStatistics 차량별 일일 운행 차수 통계 반환
 func (bt *BusTracker) GetDailyTripStatistics() map[string]int {
+	now := time.Now()
+
+	// 자동 리셋 확인
+	bt.checkAndResetDailyCounters(now)
+
 	bt.countersMutex.RLock()
 	defer bt.countersMutex.RUnlock()
 
 	// 복사본 반환
 	stats := make(map[string]int)
-	for plateNo, tripCount := range bt.tripCounters {
+	for plateNo, tripCount := range bt.dailyTripCounters {
 		stats[plateNo] = tripCount
 	}
 	return stats
@@ -493,8 +581,47 @@ func (bt *BusTracker) GetDailyTripStatistics() map[string]int {
 
 // GetBusTripCount 특정 차량의 일일 운행 차수 반환
 func (bt *BusTracker) GetBusTripCount(plateNo string) int {
+	now := time.Now()
+
+	// 자동 리셋 확인
+	bt.checkAndResetDailyCounters(now)
+
 	bt.countersMutex.RLock()
 	defer bt.countersMutex.RUnlock()
 
-	return bt.tripCounters[plateNo]
+	return bt.dailyTripCounters[plateNo]
+}
+
+// GetCurrentOperatingDate 현재 운영일자 반환
+func (bt *BusTracker) GetCurrentOperatingDate() string {
+	bt.countersMutex.RLock()
+	defer bt.countersMutex.RUnlock()
+	return bt.currentDate
+}
+
+// GetLastResetTime 마지막 리셋 시간 반환
+func (bt *BusTracker) GetLastResetTime() time.Time {
+	bt.countersMutex.RLock()
+	defer bt.countersMutex.RUnlock()
+	return bt.lastResetTime
+}
+
+// ForceNewOperatingDay 운영일 강제 변경 (테스트용)
+func (bt *BusTracker) ForceNewOperatingDay(newDate string) {
+	bt.countersMutex.Lock()
+	defer bt.countersMutex.Unlock()
+
+	bt.dailyTripCounters = make(map[string]int)
+	bt.currentDate = newDate
+	bt.lastResetTime = time.Now()
+
+	// 기존 추적 정보의 종료 상태도 모두 리셋 (새로운 날 시작)
+	bt.mutex.Lock()
+	for _, info := range bt.busInfoMap {
+		if info.IsTerminated {
+			info.IsTerminated = false
+			info.TripNumber = 0 // 새로운 날이므로 차수도 리셋
+		}
+	}
+	bt.mutex.Unlock()
 }
