@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -61,7 +62,7 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 	logger.Infof("현재 운영일자: %s", currentOperatingDate)
 
 	// API2 우선 통합 캐시 생성
-	unifiedStationCache := cache.NewStationCacheService(cfg, logger, "api2")
+	unifiedStationCache := cache.NewStationCacheService(cfg, logger, "unified")
 
 	var api1RouteIDs, api2RouteIDs []string
 	if len(cfg.API1Config.RouteIDs) > 0 {
@@ -74,8 +75,10 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 	allRouteIDs := append(api1RouteIDs, api2RouteIDs...)
 	logger.Infof("전체 노선 IDs 통합: %v", allRouteIDs)
 
-	if err := unifiedStationCache.LoadStationCache(allRouteIDs); err != nil {
-		logger.Errorf("통합 정류소 캐시 로드 실패: %v", err)
+	if len(allRouteIDs) > 0 {
+		if err := unifiedStationCache.LoadStationCache(allRouteIDs); err != nil {
+			logger.Errorf("통합 정류소 캐시 로드 실패: %v", err)
+		}
 	}
 
 	var api1Client *api.API1Client
@@ -229,25 +232,9 @@ func getDailyOperatingDate(now time.Time, cfg *config.Config) string {
 // getWebPort 웹 서버 포트 가져오기 (환경변수 또는 기본값)
 func getWebPort() int {
 	if port := os.Getenv("WEB_PORT"); port != "" {
-		if p := parseInt(port); p > 0 {
+		if p, err := strconv.Atoi(port); err == nil && p > 0 {
 			return p
 		}
 	}
 	return 8080 // 기본 포트
-}
-
-// parseInt 문자열을 정수로 변환
-func parseInt(s string) int {
-	if len(s) == 0 {
-		return 0
-	}
-
-	result := 0
-	for _, char := range s {
-		if char < '0' || char > '9' {
-			return 0
-		}
-		result = result*10 + int(char-'0')
-	}
-	return result
 }
