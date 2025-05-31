@@ -60,6 +60,19 @@ func LoadConfig() *Config {
 		log.Println(".env 파일을 성공적으로 로드했습니다.")
 	}
 
+	// 🔧 임시 디버깅: 환경변수 값들을 직접 출력
+	log.Printf("DEBUG - OPERATING_START_HOUR: '%s'", os.Getenv("OPERATING_START_HOUR"))
+	log.Printf("DEBUG - OPERATING_START_MINUTE: '%s'", os.Getenv("OPERATING_START_MINUTE"))
+	log.Printf("DEBUG - OPERATING_END_HOUR: '%s'", os.Getenv("OPERATING_END_HOUR"))
+	log.Printf("DEBUG - OPERATING_END_MINUTE: '%s'", os.Getenv("OPERATING_END_MINUTE"))
+	log.Printf("DEBUG - BUS_CLEANUP_INTERVAL_MINUTES: '%s'", os.Getenv("BUS_CLEANUP_INTERVAL_MINUTES"))
+	log.Printf("DEBUG - BUS_DISAPPEARANCE_TIMEOUT_MINUTES: '%s'", os.Getenv("BUS_DISAPPEARANCE_TIMEOUT_MINUTES"))
+	log.Printf("DEBUG - ENABLE_TERMINAL_STOP: '%s'", os.Getenv("ENABLE_TERMINAL_STOP"))
+	log.Printf("DEBUG - DATA_MERGE_INTERVAL_SECONDS: '%s'", os.Getenv("DATA_MERGE_INTERVAL_SECONDS"))
+	log.Printf("DEBUG - DATA_RETENTION_MINUTES: '%s'", os.Getenv("DATA_RETENTION_MINUTES"))
+	log.Printf("DEBUG - API1_INTERVAL_SECONDS: '%s'", os.Getenv("API1_INTERVAL_SECONDS"))
+	log.Printf("DEBUG - API2_INTERVAL_SECONDS: '%s'", os.Getenv("API2_INTERVAL_SECONDS"))
+
 	cfg := &Config{
 		// 기본 인증 정보
 		ServiceKey: getEnv("SERVICE_KEY", ""),
@@ -170,24 +183,34 @@ func getEnv(key, defaultValue string) string {
 // getIntEnv 환경변수에서 정수값을 가져오거나 기본값 반환 (공용 헬퍼 사용)
 func getIntEnv(key string, defaultValue int) int {
 	value := utils.String.TrimSpace(os.Getenv(key))
+
+	// 🔧 디버깅: 변환 과정 출력
+	log.Printf("DEBUG - getIntEnv('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
+
 	result := utils.Convert.StringToInt(value, defaultValue)
 
 	if value != "" && result == defaultValue {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d를 사용합니다.", key, defaultValue)
 	}
 
+	log.Printf("DEBUG - getIntEnv('%s'): result=%d", key, result)
 	return result
 }
 
 // getBoolEnv 환경변수에서 불린값을 가져오거나 기본값 반환 (공용 헬퍼 사용)
 func getBoolEnv(key string, defaultValue bool) bool {
 	value := utils.String.TrimSpace(os.Getenv(key))
+
+	// 🔧 디버깅: 변환 과정 출력
+	log.Printf("DEBUG - getBoolEnv('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
+
 	result := utils.Convert.StringToBool(value, defaultValue)
 
 	if value != "" && result == defaultValue {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %t를 사용합니다.", key, defaultValue)
 	}
 
+	log.Printf("DEBUG - getBoolEnv('%s'): result=%t", key, result)
 	return result
 }
 
@@ -218,24 +241,34 @@ func getRouteIDList(key string) []string {
 // getDuration 환경변수에서 duration 파싱 (공용 헬퍼 사용)
 func getDuration(key string, defaultSeconds int) time.Duration {
 	value := utils.String.TrimSpace(os.Getenv(key))
+
+	// 🔧 디버깅: 변환 과정 출력
+	log.Printf("DEBUG - getDuration('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
+
 	result := utils.Time.ParseDurationSeconds(value, defaultSeconds)
 
 	if value != "" && result == time.Duration(defaultSeconds)*time.Second {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d초를 사용합니다.", key, defaultSeconds)
 	}
 
+	log.Printf("DEBUG - getDuration('%s'): result=%v", key, result)
 	return result
 }
 
 // getDurationMinutes 환경변수에서 분 단위 duration 파싱 (공용 헬퍼 사용)
 func getDurationMinutes(key string, defaultMinutes int) time.Duration {
 	value := utils.String.TrimSpace(os.Getenv(key))
+
+	// 🔧 디버깅: 변환 과정 출력
+	log.Printf("DEBUG - getDurationMinutes('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
+
 	result := utils.Time.ParseDurationMinutes(value, defaultMinutes)
 
 	if value != "" && result == time.Duration(defaultMinutes)*time.Minute {
 		log.Printf("환경변수 %s 값이 올바르지 않습니다. 기본값 %d분을 사용합니다.", key, defaultMinutes)
 	}
 
+	log.Printf("DEBUG - getDurationMinutes('%s'): result=%v", key, result)
 	return result
 }
 

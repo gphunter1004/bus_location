@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>모니터링 - Bus Tracker</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/monitoring.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1 class="header">📊 시스템 모니터링</h1>
+            <nav class="nav-menu">
+                <a href="/" class="nav-link">🏠 홈</a>
+                <a href="/dashboard" class="nav-link">📊 대시보드</a>
+                <a href="/monitoring" class="nav-link active">📈 모니터링</a>
+                <a href="/api-doc" class="nav-link">📋 API 문서</a>
+            </nav>
+        </div>
+
+        <!-- 실시간 상태 -->
+        <div class="card">
+            <h2>⚡ 실시간 상태</h2>
+            <div class="monitoring-grid">
+                <div class="monitor-box" id="systemStatus">
+                    <div class="monitor-title">시스템 상태</div>
+                    <div class="monitor-value" id="systemStatusValue">확인 중...</div>
+                    <div class="monitor-indicator" id="systemStatusIndicator"></div>
+                </div>
+                
+                <div class="monitor-box" id="activeBuses">
+                    <div class="monitor-title">활성 버스</div>
+                    <div class="monitor-value" id="activeBusesValue">-</div>
+                    <div class="monitor-trend" id="activeBusesTrend"></div>
+                </div>
+                
+                <div class="monitor-box" id="dataFlow">
+                    <div class="monitor-title">데이터 플로우</div>
+                    <div class="monitor-value" id="dataFlowValue">-</div>
+                    <div class="monitor-trend" id="dataFlowTrend"></div>
+                </div>
+                
+                <div class="monitor-box" id="responseTime">
+                    <div class="monitor-title">응답 시간</div>
+                    <div class="monitor-value" id="responseTimeValue">-</div>
+                    <div class="monitor-trend" id="responseTimeTrend"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 시스템 메트릭 -->
+        <div class="card">
+            <h2>💻 시스템 메트릭</h2>
+            <div class="metrics-container">
+                <div class="metric-card">
+                    <h3>메모리 사용량</h3>
+                    <div class="metric-chart" id="memoryChart">
+                        <div class="chart-placeholder">메모리 차트 로딩 중...</div>
+                    </div>
+                    <div class="metric-value" id="memoryValue">- MB</div>
+                </div>
+                
+                <div class="metric-card">
+                    <h3>고루틴 수</h3>
+                    <div class="metric-chart" id="goroutineChart">
+                        <div class="chart-placeholder">고루틴 차트 로딩 중...</div>
+                    </div>
+                    <div class="metric-value" id="goroutineValue">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API 상태 -->
+        <div class="card">
+            <h2>🔗 API 상태</h2>
+            <div class="api-status-grid">
+                <div class="api-status-item">
+                    <div class="api-name">경기도 버스 API (API1)</div>
+                    <div class="api-status" id="api1Status">
+                        <span class="status-indicator" id="api1Indicator"></span>
+                        <span id="api1StatusText">확인 중...</span>
+                    </div>
+                    <div class="api-metrics">
+                        <span>응답시간: <span id="api1ResponseTime">-</span>ms</span>
+                        <span>호출 주기: <span id="api1Interval">-</span></span>
+                    </div>
+                </div>
+                
+                <div class="api-status-item">
+                    <div class="api-name">공공데이터포털 API (API2)</div>
+                    <div class="api-status" id="api2Status">
+                        <span class="status-indicator" id="api2Indicator"></span>
+                        <span id="api2StatusText">확인 중...</span>
+                    </div>
+                    <div class="api-metrics">
+                        <span>응답시간: <span id="api2ResponseTime">-</span>ms</span>
+                        <span>호출 주기: <span id="api2Interval">-</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 최근 로그 -->
+        <div class="card">
+            <h2>📝 최근 로그</h2>
+            <div class="log-controls">
+                <select id="logLevel">
+                    <option value="">모든 레벨</option>
+                    <option value="error">ERROR</option>
+                    <option value="warn">WARN</option>
+                    <option value="info">INFO</option>
+                    <option value="debug">DEBUG</option>
+                </select>
+                <button class="btn" onclick="refreshLogs()">🔄 새로고침</button>
+                <button class="btn" onclick="clearLogs()">🗑️ 지우기</button>
+            </div>
+            <div class="log-container" id="logContainer">
+                <div class="log-loading">로그 로딩 중...</div>
+            </div>
+        </div>
+
+        <!-- 알림 및 경고 -->
+        <div class="card">
+            <h2>⚠️ 알림 및 경고</h2>
+            <div class="alerts-container" id="alertsContainer">
+                <div class="alert-loading">알림 로딩 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/monitoring.js"></script>
+</body>
+</html>

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API 문서 - Bus Tracker</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/api-doc.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1 class="header">📋 API 문서</h1>
+            <nav class="nav-menu">
+                <a href="/" class="nav-link">🏠 홈</a>
+                <a href="/dashboard" class="nav-link">📊 대시보드</a>
+                <a href="/monitoring" class="nav-link">📈 모니터링</a>
+                <a href="/api-doc" class="nav-link active">📋 API 문서</a>
+            </nav>
+        </div>
+
+        <!-- API 개요 -->
+        <div class="card">
+            <h2>🚀 API 개요</h2>
+            <div class="api-overview">
+                <div class="overview-item">
+                    <h3>Base URL</h3>
+                    <code>http://localhost:8080/api/v1</code>
+                </div>
+                <div class="overview-item">
+                    <h3>인증</h3>
+                    <p>API 키 기반 인증 (선택사항)</p>
+                    <code>X-API-Key: your-api-key</code>
+                </div>
+                <div class="overview-item">
+                    <h3>응답 형식</h3>
+                    <p>모든 응답은 JSON 형식</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 상태 관련 API -->
+        <div class="card">
+            <h2>📊 시스템 상태 API</h2>
+            <div class="api-section">
+                
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/status</span>
+                        <span class="description">시스템 상태 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>시스템의 현재 상태와 설정 정보를 반환합니다.</p>
+                        <div class="code-example">
+                            <h4>응답 예시:</h4>
+                            <pre><code>{
+  "success": true,
+  "data": {
+    "status": "running",
+    "currentTime": "2024-12-19T15:30:00Z",
+    "operatingDate": "2024-12-19",
+    "orchestratorRunning": true,
+    "operatingTime": true
+  },
+  "message": "시스템 상태 조회 성공"
+}</code></pre>
+                        </div>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/status')">🧪 테스트</button>
+                    </div>
+                </div>
+
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/status/health</span>
+                        <span class="description">헬스체크</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>시스템의 전반적인 건강 상태를 확인합니다.</p>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/status/health')">🧪 테스트</button>
+                    </div>
+                </div>
+
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/status/statistics</span>
+                        <span class="description">통계 정보 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>버스, 캐시, 시스템 메트릭 등의 통계를 반환합니다.</p>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/status/statistics')">🧪 테스트</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- 설정 관련 API -->
+        <div class="card">
+            <h2>⚙️ 설정 관련 API</h2>
+            <div class="api-section">
+                
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/config</span>
+                        <span class="description">시스템 설정 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>현재 시스템 설정 정보를 조회합니다.</p>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/config')">🧪 테스트</button>
+                    </div>
+                </div>
+
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/config/operating-status</span>
+                        <span class="description">운영 상태 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>현재 운영 상태와 시간 정보를 조회합니다.</p>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/config/operating-status')">🧪 테스트</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- 시스템 제어 API -->
+        <div class="card">
+            <h2>🔧 시스템 제어 API</h2>
+            <div class="api-section">
+                
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method post">POST</span>
+                        <span class="path">/api/v1/control/start</span>
+                        <span class="description">시스템 시작</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>버스 트래킹 시스템을 시작합니다.</p>
+                        <button class="btn test-btn danger" onclick="testAPIPost('/api/v1/control/start')">🚀 시작</button>
+                    </div>
+                </div>
+
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method post">POST</span>
+                        <span class="path">/api/v1/control/stop</span>
+                        <span class="description">시스템 정지</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>버스 트래킹 시스템을 정지합니다.</p>
+                        <button class="btn test-btn danger" onclick="testAPIPost('/api/v1/control/stop')">⏹️ 정지</button>
+                    </div>
+                </div>
+
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method post">POST</span>
+                        <span class="path">/api/v1/control/restart</span>
+                        <span class="description">시스템 재시작</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>버스 트래킹 시스템을 재시작합니다.</p>
+                        <button class="btn test-btn danger" onclick="testAPIPost('/api/v1/control/restart')">🔄 재시작</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- 모니터링 API -->
+        <div class="card">
+            <h2>📈 모니터링 API</h2>
+            <div class="api-section">
+                
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/monitoring/metrics</span>
+                        <span class="description">시스템 메트릭 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>CPU, 메모리, 디스크 사용량 등의 시스템 메트릭을 반환합니다.</p>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/monitoring/metrics')">🧪 테스트</button>
+                    </div>
+                </div>
+
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/monitoring/logs</span>
+                        <span class="description">시스템 로그 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>최근 시스템 로그를 조회합니다.</p>
+                        <div class="parameters">
+                            <h4>쿼리 파라미터:</h4>
+                            <ul>
+                                <li><code>limit</code> (number): 조회할 로그 수 (기본값: 100)</li>
+                                <li><code>level</code> (string): 로그 레벨 (debug, info, warn, error)</li>
+                            </ul>
+                        </div>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/monitoring/logs?limit=10')">🧪 테스트</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- 트래킹 관리 API -->
+        <div class="card">
+            <h2>🚌 트래킹 관리 API</h2>
+            <div class="api-section">
+                
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/tracking/buses</span>
+                        <span class="description">추적 중인 버스 목록 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>현재 추적 중인 모든 버스의 목록을 조회합니다.</p>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/tracking/buses')">🧪 테스트</button>
+                    </div>
+                </div>
+
+                <div class="api-endpoint">
+                    <div class="endpoint-header">
+                        <span class="method get">GET</span>
+                        <span class="path">/api/v1/tracking/trips/statistics</span>
+                        <span class="description">운행 차수 통계 조회</span>
+                    </div>
+                    <div class="endpoint-details">
+                        <p>일일 운행 차수 통계를 조회합니다.</p>
+                        <button class="btn test-btn" onclick="testAPI('/api/v1/tracking/trips/statistics')">🧪 테스트</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- API 테스트 결과 -->
+        <div class="card">
+            <h2>🧪 API 테스트 결과</h2>
+            <div id="testResult" class="test-result">
+                <p>API 테스트 버튼을 클릭하면 여기에 결과가 표시됩니다.</p>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/static/js/api-doc.js"></script>
+</body>
+</html>

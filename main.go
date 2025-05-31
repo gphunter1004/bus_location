@@ -22,14 +22,14 @@ func main() {
 	cfg := config.LoadConfig()
 	logger := utils.NewLogger()
 
-	logger.Info("버스 트래커 시작 (통합 모드 + 웹 인터페이스)")
+	logger.Info("버스 트래커 시작 (통합 모드 + Fiber 웹 인터페이스)")
 	cfg.PrintConfig()
 
-	runUnifiedModeWithWeb(cfg, logger)
+	runUnifiedModeWithFiberWeb(cfg, logger)
 }
 
-func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
-	logger.Info("통합 모드 + 웹 인터페이스 시작")
+func runUnifiedModeWithFiberWeb(cfg *config.Config, logger *utils.Logger) {
+	logger.Info("통합 모드 + Fiber 웹 인터페이스 시작")
 
 	// 환경변수 디버깅 정보
 	logger.Infof("설정 확인 - API1 노선수: %d개, API2 노선수: %d개",
@@ -99,10 +99,16 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 
 	orchestrator := services.NewMultiAPIOrchestrator(cfg, logger, api1Client, api2Client, dataManager)
 
-	// 웹 서버 생성
-	webServer := web.NewWebServer(
+	// Fiber 웹 서버 생성
+	fiberServer := web.NewFiberServer(
 		cfg, logger, orchestrator, busTracker, unifiedStationCache,
 		api1Client, api2Client, dataManager)
+
+	// 개발 모드 확인 및 설정
+	if isDevelopmentMode() {
+		fiberServer.SetupDevelopmentMode()
+		logger.Info("개발 모드가 활성화되었습니다")
+	}
 
 	// WaitGroup으로 서비스 관리
 	var wg sync.WaitGroup
@@ -119,7 +125,7 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 		log.Fatalf("오케스트레이터 시작 실패: %v", err)
 	}
 
-	// 웹 서버 시작 (고루틴에서)
+	// Fiber 웹 서버 시작 (고루틴에서)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -127,9 +133,9 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 		// 웹 서버 포트 설정 (환경변수 또는 기본값)
 		webPort := getWebPort()
 
-		logger.Infof("웹 서버 시작 중 - 포트: %d", webPort)
-		if err := webServer.Start(webPort); err != nil {
-			logger.Errorf("웹 서버 시작 실패: %v", err)
+		logger.Infof("Fiber 웹 서버 시작 중 - 포트: %d", webPort)
+		if err := fiberServer.Start(webPort); err != nil {
+			logger.Errorf("Fiber 웹 서버 시작 실패: %v", err)
 		}
 	}()
 
@@ -137,9 +143,17 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	logger.Info("🚌 통합 버스 트래커 실행 중")
+	logger.Info("🚌 통합 버스 트래커 실행 중 (Fiber)")
 	logger.Infof("📊 웹 대시보드: http://localhost:%d", getWebPort())
+	logger.Infof("📈 모니터링: http://localhost:%d/monitoring", getWebPort())
+	logger.Infof("📋 API 문서: http://localhost:%d/api-doc", getWebPort())
+	logger.Infof("📡 API 엔드포인트: http://localhost:%d/api/v1/", getWebPort())
 	logger.Infof("📅 운영일자: %s", currentOperatingDate)
+
+	if isDevelopmentMode() {
+		logger.Infof("🔧 개발 모드 엔드포인트: http://localhost:%d/dev/", getWebPort())
+	}
+
 	logger.Info("⏹️  종료하려면 Ctrl+C를 누르세요")
 
 	// 종료 신호 대기
@@ -147,9 +161,9 @@ func runUnifiedModeWithWeb(cfg *config.Config, logger *utils.Logger) {
 
 	logger.Info("📶 종료 신호 수신 - 우아한 종료 시작")
 
-	// 웹 서버 먼저 정지
-	if err := webServer.Stop(); err != nil {
-		logger.Errorf("웹 서버 정지 실패: %v", err)
+	// Fiber 웹 서버 먼저 정지
+	if err := fiberServer.Stop(); err != nil {
+		logger.Errorf("Fiber 웹 서버 정지 실패: %v", err)
 	}
 
 	// 오케스트레이터 정지
@@ -214,4 +228,10 @@ func getDailyOperatingDate(now time.Time, cfg *config.Config) string {
 // getWebPort 웹 서버 포트 가져오기 (환경변수 또는 기본값)
 func getWebPort() int {
 	return utils.Convert.StringToInt(os.Getenv("WEB_PORT"), 8080)
+}
+
+// isDevelopmentMode 개발 모드 여부 확인
+func isDevelopmentMode() bool {
+	env := os.Getenv("ENVIRONMENT")
+	return env == "development" || env == "dev" || env == ""
 }
