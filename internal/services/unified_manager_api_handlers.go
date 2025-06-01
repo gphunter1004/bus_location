@@ -1,4 +1,4 @@
-// internal/services/unified_manager_api_handlers.go
+// internal/services/unified_manager_api_handlers.go - RouteId 보장 로직
 package services
 
 import (
@@ -7,7 +7,7 @@ import (
 	"bus-tracker/internal/models"
 )
 
-// UpdateAPI1Data API1 데이터 업데이트 처리
+// UpdateAPI1Data API1 데이터 업데이트 처리 (RouteId 보장)
 func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI1Data(busLocations []models.BusLocation) {
 	if udm.isFirstRun {
 		udm.loadRecentESDataForFirstRun()
@@ -26,35 +26,20 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI1Data(busLocations []m
 			continue
 		}
 
-		// 첫 실행 시 중복 체크
-		if isFirstProcessing && udm.isDuplicateDataForFirstRun(plateNo, bus) {
-			udm.updateInternalStateOnly(plateNo, bus, now, "API1")
+		// RouteId 검증 (API1은 항상 유효해야 함)
+		if bus.RouteId == 0 {
+			udm.logger.Errorf("API1 데이터에 유효하지 않은 RouteId - 차량: %s, 건너뛰기", plateNo)
 			continue
 		}
 
-		unified, exists := udm.dataStore[plateNo]
-		if !exists {
-			unified = &UnifiedBusData{
-				PlateNo:           plateNo,
-				RouteId:           bus.RouteId,
-				RouteNm:           bus.GetRouteIDString(),
-				LastUpdate:        now,
-				CurrentStationSeq: bus.StationSeq,
-				CurrentStationId:  bus.StationId,
-				DataSources:       []string{},
-			}
-			udm.dataStore[plateNo] = unified
+		// 첫 실행 시 중복 체크
+		if isFirstProcessing && udm.isDuplicateDataForFirstRun(plateNo, bus) {
+			udm.updateInternalStateAPI1(plateNo, bus, now)
+			continue
 		}
 
-		shouldUpdateStationInfo := true
-		newSeq := bus.StationSeq
-		currentSeq := unified.CurrentStationSeq
-
-		if currentSeq > 0 && newSeq < currentSeq && !isFirstProcessing {
-			shouldUpdateStationInfo = false
-		} else if currentSeq > 0 && newSeq == currentSeq && !isFirstProcessing {
-			shouldUpdateStationInfo = false
-		}
+		// 통합 데이터 가져오기 또는 생성 (RouteId 보장)
+		unified := udm.getOrCreateUnifiedData(plateNo, bus.RouteId, now)
 
 		// API1 데이터 업데이트
 		unified.API1Data = &API1BusInfo{
@@ -73,37 +58,29 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI1Data(busLocations []m
 		unified.LastAPI1Update = now
 		unified.LastUpdate = now
 
+		// API2 정보가 없는 경우에만 API1 정보로 현재 위치 업데이트
+		if unified.API2Data == nil {
+			unified.CurrentStationSeq = bus.StationSeq
+			unified.CurrentStationId = bus.StationId
+		}
+
 		if !containsString(unified.DataSources, "api1") {
 			unified.DataSources = append(unified.DataSources, "api1")
 		}
 
-		if shouldUpdateStationInfo {
-			// API2 정보가 없는 경우에만 API1 정보 사용
-			if unified.API2Data == nil || unified.API2Data.NodeNm == "" {
-				unified.CurrentStationSeq = newSeq
-				unified.CurrentStationId = bus.StationId
+		// 트래킹 처리 (RouteId 기반)
+		cacheKey := bus.GetCacheKey()
+		stationOrder := bus.GetStationOrder()
 
-				if udm.stationCache != nil {
-					if stationInfo, exists := udm.stationCache.GetStationInfo(bus.GetRouteIDString(), newSeq); exists {
-						unified.CurrentNodeNm = stationInfo.NodeNm
-						unified.CurrentNodeId = stationInfo.NodeId
-					}
-				}
-			}
+		changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(stationOrder), cacheKey, bus.TotalStations)
+		if changed {
+			unified.TripNumber = tripNumber
 
-			routeNm := unified.RouteNm
-			if routeNm == "" {
-				routeNm = bus.GetRouteIDString()
-			}
-
-			changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(newSeq), routeNm, bus.TotalStations)
-			if changed {
-				unified.TripNumber = tripNumber
-				finalData := udm.mergeDataForBus(unified)
-				if finalData != nil {
-					unified.FinalData = finalData
-					changedBuses = append(changedBuses, *finalData)
-				}
+			// 통합 데이터 생성하여 ES 전송
+			finalData := udm.buildUnifiedData(unified)
+			if finalData != nil {
+				unified.FinalData = finalData
+				changedBuses = append(changedBuses, *finalData)
 			}
 		} else {
 			udm.busTracker.UpdateLastSeenTime(plateNo)
@@ -115,7 +92,7 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI1Data(busLocations []m
 	}
 }
 
-// UpdateAPI2Data API2 데이터 업데이트 처리
+// UpdateAPI2Data API2 데이터 업데이트 처리 (RouteId 보장)
 func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI2Data(busLocations []models.BusLocation) {
 	if udm.isFirstRun {
 		udm.loadRecentESDataForFirstRun()
@@ -134,38 +111,22 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI2Data(busLocations []m
 			continue
 		}
 
-		// 첫 실행 시 중복 체크
-		if isFirstProcessing && udm.isDuplicateDataForFirstRun(plateNo, bus) {
-			udm.updateInternalStateOnly(plateNo, bus, now, "API2")
+		// 🔧 RouteId 검증 (API2에서 추출되었는지 확인)
+		if bus.RouteId == 0 {
+			udm.logger.Warnf("API2 데이터에서 RouteId 추출 실패 - 차량: %s, RouteNm: %s, 건너뛰기", plateNo, bus.RouteNm)
 			continue
 		}
 
-		unified, exists := udm.dataStore[plateNo]
-		if !exists {
-			unified = &UnifiedBusData{
-				PlateNo:           plateNo,
-				RouteId:           bus.RouteId,
-				RouteNm:           bus.RouteNm,
-				LastUpdate:        now,
-				CurrentStationSeq: bus.NodeOrd,
-				CurrentNodeNm:     bus.NodeNm,
-				CurrentNodeId:     bus.NodeId,
-				DataSources:       []string{},
-			}
-			udm.dataStore[plateNo] = unified
+		// 첫 실행 시 중복 체크
+		if isFirstProcessing && udm.isDuplicateDataForFirstRun(plateNo, bus) {
+			udm.updateInternalStateAPI2(plateNo, bus, now)
+			continue
 		}
 
-		shouldUpdateStationInfo := true
-		newSeq := bus.NodeOrd
-		currentSeq := unified.CurrentStationSeq
+		// 🔧 통합 데이터 가져오기 또는 생성 (RouteId 보장)
+		unified := udm.getOrCreateUnifiedData(plateNo, bus.RouteId, now)
 
-		if currentSeq > 0 && newSeq < currentSeq && !isFirstProcessing {
-			shouldUpdateStationInfo = false
-		} else if currentSeq > 0 && newSeq == currentSeq && !isFirstProcessing {
-			shouldUpdateStationInfo = false
-		}
-
-		// API2 데이터 업데이트
+		// 🔧 API2 데이터 업데이트
 		unified.API2Data = &API2BusInfo{
 			NodeId:     bus.NodeId,
 			NodeNm:     bus.NodeNm,
@@ -176,40 +137,40 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI2Data(busLocations []m
 			UpdateTime: now,
 		}
 
-		if bus.RouteNm != "" {
+		// API2 원본 노선번호 저장
+		if bus.RouteNm != "" && bus.RouteNm != "0" {
 			unified.RouteNm = bus.RouteNm
-		}
-
-		if bus.StationId > 0 {
-			unified.CurrentStationId = bus.StationId
 		}
 
 		unified.LastAPI2Update = now
 		unified.LastUpdate = now
 
+		// API2 정보로 현재 위치 업데이트 (우선)
+		unified.CurrentStationSeq = bus.NodeOrd
+		unified.CurrentNodeNm = bus.NodeNm
+		unified.CurrentNodeId = bus.NodeId
+
+		if bus.StationId > 0 {
+			unified.CurrentStationId = bus.StationId
+		}
+
 		if !containsString(unified.DataSources, "api2") {
 			unified.DataSources = append(unified.DataSources, "api2")
 		}
 
-		if shouldUpdateStationInfo {
-			// API2 정보로 업데이트 (우선)
-			unified.CurrentStationSeq = newSeq
-			unified.CurrentNodeNm = bus.NodeNm
-			unified.CurrentNodeId = bus.NodeId
+		// 🔧 트래킹 처리 (RouteId 기반)
+		cacheKey := bus.GetCacheKey()
+		stationOrder := bus.GetStationOrder()
 
-			routeNm := unified.RouteNm
-			if routeNm == "" {
-				routeNm = bus.GetRouteIDString()
-			}
+		changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(stationOrder), cacheKey, bus.TotalStations)
+		if changed {
+			unified.TripNumber = tripNumber
 
-			changed, tripNumber := udm.busTracker.IsStationChanged(plateNo, int64(newSeq), routeNm, bus.TotalStations)
-			if changed {
-				unified.TripNumber = tripNumber
-				finalData := udm.mergeDataForBus(unified)
-				if finalData != nil {
-					unified.FinalData = finalData
-					changedBuses = append(changedBuses, *finalData)
-				}
+			// 🔧 통합 데이터 생성하여 ES 전송
+			finalData := udm.buildUnifiedData(unified)
+			if finalData != nil {
+				unified.FinalData = finalData
+				changedBuses = append(changedBuses, *finalData)
 			}
 		} else {
 			udm.busTracker.UpdateLastSeenTime(plateNo)
@@ -219,4 +180,78 @@ func (udm *UnifiedDataManagerWithDuplicateCheck) UpdateAPI2Data(busLocations []m
 	if len(changedBuses) > 0 {
 		udm.sendChangedBusesToElasticsearch(changedBuses, "API2")
 	}
+}
+
+// updateInternalStateAPI1 API1 내부 상태만 업데이트 (중복 체크용)
+func (udm *UnifiedDataManagerWithDuplicateCheck) updateInternalStateAPI1(plateNo string, bus models.BusLocation, now time.Time) {
+	// 🔧 RouteId 검증
+	if bus.RouteId == 0 {
+		udm.logger.Errorf("API1 중복 체크 중 유효하지 않은 RouteId - 차량: %s", plateNo)
+		return
+	}
+
+	unified := udm.getOrCreateUnifiedData(plateNo, bus.RouteId, now)
+
+	unified.API1Data = &API1BusInfo{
+		VehId:         bus.VehId,
+		StationId:     bus.StationId,
+		StationSeq:    bus.StationSeq,
+		Crowded:       bus.Crowded,
+		RemainSeatCnt: bus.RemainSeatCnt,
+		StateCd:       bus.StateCd,
+		LowPlate:      bus.LowPlate,
+		RouteTypeCd:   bus.RouteTypeCd,
+		TaglessCd:     bus.TaglessCd,
+		UpdateTime:    now,
+	}
+
+	unified.LastAPI1Update = now
+	unified.CurrentStationSeq = bus.StationSeq
+	unified.CurrentStationId = bus.StationId
+
+	if !containsString(unified.DataSources, "api1") {
+		unified.DataSources = append(unified.DataSources, "api1")
+	}
+
+	udm.busTracker.UpdateLastSeenTime(plateNo)
+}
+
+// updateInternalStateAPI2 API2 내부 상태만 업데이트 (중복 체크용)
+func (udm *UnifiedDataManagerWithDuplicateCheck) updateInternalStateAPI2(plateNo string, bus models.BusLocation, now time.Time) {
+	// 🔧 RouteId 검증
+	if bus.RouteId == 0 {
+		udm.logger.Errorf("API2 중복 체크 중 유효하지 않은 RouteId - 차량: %s, RouteNm: %s", plateNo, bus.RouteNm)
+		return
+	}
+
+	unified := udm.getOrCreateUnifiedData(plateNo, bus.RouteId, now)
+
+	unified.API2Data = &API2BusInfo{
+		NodeId:     bus.NodeId,
+		NodeNm:     bus.NodeNm,
+		NodeOrd:    bus.NodeOrd,
+		RouteNm:    bus.RouteNm,
+		GpsLati:    bus.GpsLati,
+		GpsLong:    bus.GpsLong,
+		UpdateTime: now,
+	}
+
+	if bus.RouteNm != "" && bus.RouteNm != "0" {
+		unified.RouteNm = bus.RouteNm
+	}
+
+	unified.LastAPI2Update = now
+	unified.CurrentStationSeq = bus.NodeOrd
+	unified.CurrentNodeNm = bus.NodeNm
+	unified.CurrentNodeId = bus.NodeId
+
+	if bus.StationId > 0 {
+		unified.CurrentStationId = bus.StationId
+	}
+
+	if !containsString(unified.DataSources, "api2") {
+		unified.DataSources = append(unified.DataSources, "api2")
+	}
+
+	udm.busTracker.UpdateLastSeenTime(plateNo)
 }

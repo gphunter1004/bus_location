@@ -173,8 +173,7 @@ func (scs *StationCacheServiceV2) EnrichBusLocationWithStationInfo(busLocation *
 
 // LoadStationCache 모든 노선의 정류소 정보를 미리 로드
 func (scs *StationCacheServiceV2) LoadStationCache(routeIDs []string) error {
-	// 중복 제거: 통합 키 기준으로 고유한 노선만 처리
-	uniqueRoutes := make(map[string]string) // unifiedKey -> originalRouteID
+	uniqueRoutes := make(map[string]string)
 	for _, routeID := range routeIDs {
 		if err := scs.routeConverter.ValidateRouteID(routeID, scs.apiType); err != nil {
 			return err

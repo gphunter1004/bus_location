@@ -1,4 +1,4 @@
-// internal/models/bus_location.go - 버스 위치 및 공통 모델들
+// internal/models/bus_location.go - 명확한 API 분리
 package models
 
 import (
@@ -56,12 +56,27 @@ func ParseRouteID(routeID string) (int64, error) {
 	return strconv.ParseInt(routeID, 10, 64)
 }
 
-// GetRouteIDString int64 routeId를 문자열로 변환
-func (bl *BusLocation) GetRouteIDString() string {
-	if bl.RouteNm != "" {
-		return bl.RouteNm
-	}
+// GetCacheKey 캐시 조회용 RouteId 문자열 반환
+func (bl *BusLocation) GetCacheKey() string {
 	return strconv.FormatInt(bl.RouteId, 10)
+}
+
+// GetStationOrder 정류장 순서 반환
+func (bl *BusLocation) GetStationOrder() int {
+	if bl.NodeOrd > 0 {
+		return bl.NodeOrd // API2
+	}
+	return bl.StationSeq // API1
+}
+
+// IsAPI2Data API2 데이터인지 확인
+func (bl *BusLocation) IsAPI2Data() bool {
+	return bl.NodeId != ""
+}
+
+// IsAPI1Data API1 데이터인지 확인
+func (bl *BusLocation) IsAPI1Data() bool {
+	return bl.VehId > 0 && bl.NodeId == ""
 }
 
 // min 함수 추가

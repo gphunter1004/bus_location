@@ -2,6 +2,7 @@
 package tracker
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
@@ -48,11 +49,12 @@ func (bt *BusTrackerWithDuplicateCheck) FilterChangedStationsWithDuplicateCheck(
 		// StationId를 위치 정보로 사용
 		currentPosition := bus.StationId
 		if currentPosition <= 0 {
-			// StationId가 없으면 NodeOrd 사용
-			currentPosition = int64(bus.NodeOrd)
+			// StationId가 없으면 정류장 순서 사용
+			currentPosition = int64(bus.GetStationOrder())
 		}
 
-		routeNm := bus.GetRouteIDString() // RouteNm 우선, 없으면 RouteId
+		// 🔧 캐시 키 (RouteId 기반)
+		cacheKey := bus.GetCacheKey()
 
 		// 종점 도착 시 종료 (config에서 활성화된 경우만)
 		if bt.BusTracker.config.EnableTerminalStop && bt.BusTracker.shouldTerminateAtTerminal(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
@@ -64,7 +66,7 @@ func (bt *BusTrackerWithDuplicateCheck) FilterChangedStationsWithDuplicateCheck(
 		}
 
 		// 정류장 변경 체크 (첫 실행 시 ES 중복 체크 포함)
-		if changed, tripNumber := bt.isStationChangedWithDuplicateCheck(bus.PlateNo, currentPosition, routeNm, bus.TotalStations, bus, logger); changed {
+		if changed, tripNumber := bt.isStationChangedWithDuplicateCheck(bus.PlateNo, currentPosition, cacheKey, bus.TotalStations, bus, logger); changed {
 			bus.TripNumber = tripNumber
 			changedBuses = append(changedBuses, bus)
 		}
@@ -121,7 +123,7 @@ func (bt *BusTrackerWithDuplicateCheck) loadRecentESDataForDuplicateCheck(logger
 }
 
 // isStationChangedWithDuplicateCheck 중복 체크를 포함한 정류장 변경 확인
-func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plateNo string, currentPosition int64, routeNm string, totalStations int, bus models.BusLocation, logger *utils.Logger) (bool, int) {
+func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plateNo string, currentPosition int64, cacheKey string, totalStations int, bus models.BusLocation, logger *utils.Logger) (bool, int) {
 	now := time.Now()
 
 	// 일일 카운터 리셋 확인
@@ -144,11 +146,18 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 
 					// 내부 상태는 업데이트하되 ES 전송은 하지 않음
 					tripNumber := bt.BusTracker.getNextTripNumber(plateNo)
+
+					// RouteId 파싱
+					var routeId int64
+					if parsed, err := strconv.ParseInt(cacheKey, 10, 64); err == nil {
+						routeId = parsed
+					}
+
 					bt.BusTracker.busInfoMap[plateNo] = &BusTrackingInfo{
 						LastPosition:  currentPosition,
 						LastSeenTime:  now,
 						StartPosition: currentPosition,
-						RouteNm:       routeNm,
+						RouteId:       routeId, // 🔧 RouteId만 저장
 						TotalStations: totalStations,
 						IsTerminated:  false,
 						TripNumber:    tripNumber,
@@ -164,11 +173,18 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 
 		// 새로운 버스 또는 중복이 아닌 경우 - 일일 운행 차수 할당
 		tripNumber := bt.BusTracker.getNextTripNumber(plateNo)
+
+		// RouteId 파싱
+		var routeId int64
+		if parsed, err := strconv.ParseInt(cacheKey, 10, 64); err == nil {
+			routeId = parsed
+		}
+
 		bt.BusTracker.busInfoMap[plateNo] = &BusTrackingInfo{
 			LastPosition:  currentPosition,
 			LastSeenTime:  now,
 			StartPosition: currentPosition,
-			RouteNm:       routeNm,
+			RouteId:       routeId, // 🔧 RouteId만 저장
 			TotalStations: totalStations,
 			IsTerminated:  false,
 			TripNumber:    tripNumber,
@@ -187,7 +203,12 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 		info.IsTerminated = false
 		info.TripNumber = tripNumber
 		info.TripStartTime = now
-		info.RouteNm = routeNm
+
+		// RouteId 업데이트
+		if parsed, err := strconv.ParseInt(cacheKey, 10, 64); err == nil {
+			info.RouteId = parsed
+		}
+
 		return true, tripNumber
 	}
 

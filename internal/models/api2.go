@@ -1,4 +1,4 @@
-// internal/models/api2.go - API2 관련 모델들
+// internal/models/api2.go - API2에서 RouteId 추출 개선
 package models
 
 import (
@@ -130,12 +130,12 @@ func (ar *API2Response) GetBusLocationItemList() []API2BusLocationItem {
 
 // ConvertToBusLocation API2BusLocationItem을 BusLocation으로 변환
 func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
-	// RouteNm을 숫자에서 문자열로 변환
+	// 🔧 RouteNm을 숫자에서 문자열로 변환 (ES 저장용)
 	routeNm := fmt.Sprintf("%d", item.RouteNm)
 
-	// API2의 routeId는 "GGB233000266" 형식이므로 숫자 부분 추출
+	// RouteId 추출: RouteId 필드에서 GGB 제거하여 숫자 추출
 	var routeId int64 = 0
-	if item.RouteId != "" && len(item.RouteId) > 3 {
+	if item.RouteId != "" && len(item.RouteId) > 3 && strings.HasPrefix(item.RouteId, "GGB") {
 		if id, err := ParseRouteID(item.RouteId[3:]); err == nil {
 			routeId = id
 		}
@@ -149,7 +149,6 @@ func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 			stationId = nodeIdInt
 		}
 	}
-	// NodeId가 없으면 StationId는 0으로 유지 (캐시 조회는 NodeOrd로 함)
 
 	nodeOrd := item.NodeOrd
 	if nodeOrd == 0 {
@@ -157,11 +156,11 @@ func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 	}
 
 	return BusLocation{
-		// API2 실제 데이터 매핑
+		// 🔧 RouteId는 항상 채워짐 (추출된 숫자 ID)
+		RouteId:    routeId,        // 추출된 숫자형 노선ID
+		RouteNm:    routeNm,        // API2의 실제 노선번호 (문자열)
 		PlateNo:    item.VehicleNo, // 차량번호
-		RouteId:    routeId,        // 숫자형 노선ID (API1 호환용)
-		RouteNm:    routeNm,        // 문자열 노선번호 (API2 원본을 문자열로 변환)
-		StationId:  stationId,      // NodeId에서 GGB 제거한 값 또는 NodeOrd
+		StationId:  stationId,      // NodeId에서 GGB 제거한 값
 		StationSeq: nodeOrd,        // 정류장 순서
 		NodeId:     item.NodeId,    // 정류장ID (API2 원본)
 		NodeNm:     item.NodeNm,    // 정류장명 (API2 원본)

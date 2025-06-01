@@ -27,8 +27,8 @@ func (bt *BusTracker) CleanupMissingBuses(logger *utils.Logger) int {
 				terminatedBuses = append(terminatedBuses, plateNo)
 				if logger != nil {
 					operatingDate := getDailyOperatingDate(now, bt.config)
-					logger.Infof("버스 운행 종료 - 차량번호: %s, 노선: %s, %s %d차수 완료, 이유: %v 미목격",
-						plateNo, info.RouteNm, operatingDate, info.TripNumber, timeSinceLastSeen.Round(time.Minute))
+					logger.Infof("버스 운행 종료 - 차량번호: %s, 노선ID: %d, %s %d차수 완료, 이유: %v 미목격",
+						plateNo, info.RouteId, operatingDate, info.TripNumber, timeSinceLastSeen.Round(time.Minute))
 				}
 			} else {
 				// 이미 종료된 버스는 메모리에서 완전 제거 (추가 5분 후)

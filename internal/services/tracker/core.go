@@ -1,7 +1,8 @@
-// internal/services/tracker/bus_tracker_core.go - 핵심 추적 기능
+// internal/services/tracker/bus_tracker_core.go - 간소화된 추적 로직
 package tracker
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,8 +17,7 @@ type BusTrackingInfo struct {
 	PreviousPosition int64     // 이전 위치
 	LastSeenTime     time.Time // 마지막 목격 시간
 	StartPosition    int64     // 시작 위치
-	RouteId          int64     // 노선 ID (추적 정보에 포함)
-	RouteNm          string    // 노선번호 (문자열)
+	RouteId          int64     // 노선 ID (기본 키)
 	TotalStations    int       // 전체 정류소 개수
 	IsTerminated     bool      // 종료 상태 플래그
 	TripNumber       int       // 운행 차수
@@ -50,7 +50,7 @@ func NewBusTracker(cfg *config.Config) *BusTracker {
 }
 
 // IsStationChanged 정류장 변경 여부 확인 및 상태 업데이트
-func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, routeNm string, totalStations int) (bool, int) {
+func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, cacheKey string, totalStations int) (bool, int) {
 	now := time.Now()
 
 	// 일일 카운터 리셋 확인
@@ -65,11 +65,17 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ro
 		// 새로운 버스 - 일일 운행 차수 할당
 		tripNumber := bt.getNextTripNumber(plateNo)
 
+		// RouteId 파싱
+		var routeId int64
+		if parsed, err := strconv.ParseInt(cacheKey, 10, 64); err == nil {
+			routeId = parsed
+		}
+
 		bt.busInfoMap[plateNo] = &BusTrackingInfo{
 			LastPosition:  currentPosition,
 			LastSeenTime:  now,
 			StartPosition: currentPosition,
-			RouteNm:       routeNm,
+			RouteId:       routeId,
 			TotalStations: totalStations,
 			IsTerminated:  false,
 			TripNumber:    tripNumber,
@@ -88,7 +94,12 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ro
 		info.IsTerminated = false
 		info.TripNumber = tripNumber
 		info.TripStartTime = now
-		info.RouteNm = routeNm
+
+		// RouteId 업데이트
+		if parsed, err := strconv.ParseInt(cacheKey, 10, 64); err == nil {
+			info.RouteId = parsed
+		}
+
 		return true, tripNumber
 	}
 
@@ -118,11 +129,12 @@ func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, l
 		// StationId를 위치 정보로 사용
 		currentPosition := bus.StationId
 		if currentPosition <= 0 {
-			// StationId가 없으면 NodeOrd 사용
-			currentPosition = int64(bus.NodeOrd)
+			// StationId가 없으면 정류장 순서 사용
+			currentPosition = int64(bus.GetStationOrder())
 		}
 
-		routeNm := bus.GetRouteIDString() // RouteNm 우선, 없으면 RouteId
+		// 캐시 키 (RouteId 기반)
+		cacheKey := bus.GetCacheKey()
 
 		// 종점 도착 시 종료 (config에서 활성화된 경우만)
 		if bt.config.EnableTerminalStop && bt.shouldTerminateAtTerminal(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
@@ -134,7 +146,7 @@ func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, l
 		}
 
 		// 정류장 변경 체크
-		if changed, tripNumber := bt.IsStationChanged(bus.PlateNo, currentPosition, routeNm, bus.TotalStations); changed {
+		if changed, tripNumber := bt.IsStationChanged(bus.PlateNo, currentPosition, cacheKey, bus.TotalStations); changed {
 			bus.TripNumber = tripNumber
 			changedBuses = append(changedBuses, bus)
 		}
@@ -168,8 +180,8 @@ func (bt *BusTracker) TerminateBusTracking(plateNo string, reason string, logger
 
 	if logger != nil {
 		operatingDate := getDailyOperatingDate(time.Now(), bt.config)
-		logger.Infof("버스 운행 종료 - 차량번호: %s, 노선: %s, %s %d차수 완료, 이유: %s",
-			plateNo, info.RouteNm, operatingDate, info.TripNumber, reason)
+		logger.Infof("버스 운행 종료 - 차량번호: %s, 노선ID: %d, %s %d차수 완료, 이유: %s",
+			plateNo, info.RouteId, operatingDate, info.TripNumber, reason)
 	}
 
 	return true
