@@ -1,4 +1,4 @@
-// internal/services/unified_manager.go - Redis 중심 단순화 버전
+// internal/services/unified_manager.go - 로그 정리 버전
 package services
 
 import (
@@ -40,23 +40,13 @@ type SimplifiedUnifiedDataManager struct {
 	syncRunning  bool
 	syncMutex    sync.Mutex
 
-	// 첫 실행 중복 체크 (단순화)
+	// 첫 실행 중복 체크
 	isFirstRun    bool
 	firstRunMutex sync.Mutex
 	recentESData  map[string]*storage.BusLastData
 }
 
-// NewSimplifiedUnifiedDataManager -> NewUnifiedDataManagerWithRedis로 이름 변경 (호환성)
-func NewUnifiedDataManagerWithRedis(
-	logger *utils.Logger,
-	stationCache cache.StationCacheInterface,
-	esService *storage.ElasticsearchService,
-	redisBusManager *redis.RedisBusDataManager,
-	duplicateChecker *storage.ElasticsearchDuplicateChecker,
-	indexName string) *SimplifiedUnifiedDataManager {
-
-	return NewSimplifiedUnifiedDataManager(logger, stationCache, esService, redisBusManager, duplicateChecker, indexName)
-}
+// NewSimplifiedUnifiedDataManager 단순화된 통합 데이터 매니저 생성
 func NewSimplifiedUnifiedDataManager(
 	logger *utils.Logger,
 	stationCache cache.StationCacheInterface,
@@ -81,7 +71,19 @@ func NewSimplifiedUnifiedDataManager(
 	}
 }
 
-// loadRecentESDataForFirstRun 첫 실행 시 ES에서 최근 데이터 로드 (단순화)
+// NewUnifiedDataManagerWithRedis 호환성을 위한 별칭
+func NewUnifiedDataManagerWithRedis(
+	logger *utils.Logger,
+	stationCache cache.StationCacheInterface,
+	esService *storage.ElasticsearchService,
+	redisBusManager *redis.RedisBusDataManager,
+	duplicateChecker *storage.ElasticsearchDuplicateChecker,
+	indexName string) *SimplifiedUnifiedDataManager {
+
+	return NewSimplifiedUnifiedDataManager(logger, stationCache, esService, redisBusManager, duplicateChecker, indexName)
+}
+
+// loadRecentESDataForFirstRun 첫 실행 시 ES에서 최근 데이터 로드
 func (udm *SimplifiedUnifiedDataManager) loadRecentESDataForFirstRun() {
 	udm.firstRunMutex.Lock()
 	defer udm.firstRunMutex.Unlock()
@@ -90,14 +92,14 @@ func (udm *SimplifiedUnifiedDataManager) loadRecentESDataForFirstRun() {
 		return
 	}
 
-	udm.isFirstRun = false // 먼저 설정하여 중복 호출 방지
+	udm.isFirstRun = false
 
 	if udm.duplicateChecker == nil {
-		udm.logger.Warn("중복 체크 서비스가 없어 첫 실행 중복 체크를 건너뜁니다")
 		return
 	}
 
-	udm.logger.Info("단순화된 통합 모드 첫 실행 - Elasticsearch에서 최근 데이터 조회 중...")
+	// 로그 최소화: 첫 실행 시에만 출력
+	udm.logger.Info("첫 실행 중복 체크 데이터 로딩...")
 
 	recentData, err := udm.duplicateChecker.GetRecentBusData(30)
 	if err != nil {
@@ -108,13 +110,11 @@ func (udm *SimplifiedUnifiedDataManager) loadRecentESDataForFirstRun() {
 	udm.recentESData = recentData
 
 	if len(recentData) > 0 {
-		udm.logger.Infof("중복 체크용 데이터 로드 완료 - %d대 버스", len(recentData))
-	} else {
-		udm.logger.Info("첫 실행 - ES에 최근 데이터 없음")
+		udm.logger.Infof("중복 체크 데이터 로드 완료: %d대", len(recentData))
 	}
 }
 
-// isDuplicateDataForFirstRun 첫 실행 시 중복 데이터인지 확인 (단순화)
+// isDuplicateDataForFirstRun 첫 실행 시 중복 데이터인지 확인
 func (udm *SimplifiedUnifiedDataManager) isDuplicateDataForFirstRun(plateNo string, bus models.BusLocation) bool {
 	if len(udm.recentESData) == 0 {
 		return false
@@ -125,17 +125,10 @@ func (udm *SimplifiedUnifiedDataManager) isDuplicateDataForFirstRun(plateNo stri
 		return false
 	}
 
-	isDuplicate := esData.IsDuplicateData(bus.StationSeq, bus.NodeOrd, bus.StationId, bus.NodeId)
-
-	if isDuplicate {
-		udm.logger.Debugf("중복 데이터 감지 - 차량: %s, 현재: StationSeq=%d/NodeOrd=%d, ES최종: %s",
-			plateNo, bus.StationSeq, bus.NodeOrd, esData.LastUpdate.Format("15:04:05"))
-	}
-
-	return isDuplicate
+	return esData.IsDuplicateData(bus.StationSeq, bus.NodeOrd, bus.StationId, bus.NodeId)
 }
 
-// UpdateAPI1Data API1 데이터 업데이트 처리 (단순화)
+// UpdateAPI1Data API1 데이터 업데이트 처리
 func (udm *SimplifiedUnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation) {
 	if udm.isFirstRun {
 		udm.loadRecentESDataForFirstRun()
@@ -146,51 +139,32 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI1Data(busLocations []models.Bu
 	duplicateCount := 0
 	redisChangedCount := 0
 
-	udm.logger.Infof("🟦 API1 데이터 처리 시작 - 총 %d건", len(busLocations))
-
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
-		if plateNo == "" {
-			udm.logger.Warnf("⚠️ API1 데이터에 차량번호 없음, 건너뛰기")
-			continue
-		}
-
-		// RouteId 검증
-		if bus.RouteId == 0 {
-			udm.logger.Warnf("⚠️ API1 데이터에 유효하지 않은 RouteId - 차량: %s, 건너뛰기", plateNo)
-			continue
+		if plateNo == "" || bus.RouteId == 0 {
+			continue // 유효하지 않은 데이터는 조용히 건너뛰기
 		}
 
 		// 첫 실행 시 중복 체크
 		if udm.isDuplicateDataForFirstRun(plateNo, bus) {
 			duplicateCount++
-			// 중복이어도 Redis에는 상태 업데이트 (TTL 연장 등)
 			udm.redisBusManager.UpdateBusData(bus, []string{"api1"})
 			continue
 		}
 
-		// Redis에 업데이트하고 위치 변경 여부 확인
+		// Redis 업데이트
 		_, hasLocationChanged, err := udm.redisBusManager.UpdateBusData(bus, []string{"api1"})
 		if err != nil {
-			udm.logger.Errorf("❌ Redis 업데이트 실패 (API1, 차량: %s): %v", plateNo, err)
-			continue
+			continue // 오류는 조용히 처리
 		}
 
 		processedCount++
 
 		if hasLocationChanged {
 			redisChangedCount++
-			udm.logger.Debugf("🔄 Redis 위치 변경 감지 - 차량: %s", plateNo)
-
-			// Redis에서 위치 변경이 있으면 ES 전송 조건 확인 (동일한 로직 사용)
 			if udm.shouldSendToES(plateNo, bus) {
 				esReadyBuses = append(esReadyBuses, bus)
-				udm.logger.Debugf("🎯 ES 전송 대상 추가 (API1) - 차량: %s, RouteId: %d", plateNo, bus.RouteId)
-			} else {
-				udm.logger.Debugf("⏸️ ES 전송 조건 미충족 - 차량: %s (간격 부족 또는 기타)", plateNo)
 			}
-		} else {
-			udm.logger.Debugf("🔄 Redis 위치 변경 없음 - 차량: %s", plateNo)
 		}
 	}
 
@@ -199,11 +173,12 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI1Data(busLocations []models.Bu
 		udm.sendBatchToElasticsearch(esReadyBuses, "API1")
 	}
 
-	udm.logger.Infof("🟦 API1 배치 처리 완료 - 총: %d건, 처리: %d건, 중복: %d건, Redis변경: %d건, 🔥 ES 전송: %d건",
+	// 🎯 핵심 로그만: 처리 결과 요약
+	udm.logger.Infof("API1 처리완료: 수신=%d, 처리=%d, 중복=%d, 변경=%d, ES전송=%d",
 		len(busLocations), processedCount, duplicateCount, redisChangedCount, len(esReadyBuses))
 }
 
-// UpdateAPI2Data API2 데이터 업데이트 처리 (단순화)
+// UpdateAPI2Data API2 데이터 업데이트 처리
 func (udm *SimplifiedUnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation) {
 	if udm.isFirstRun {
 		udm.loadRecentESDataForFirstRun()
@@ -214,52 +189,32 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI2Data(busLocations []models.Bu
 	duplicateCount := 0
 	redisChangedCount := 0
 
-	udm.logger.Infof("🟨 API2 데이터 처리 시작 - 총 %d건", len(busLocations))
-
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
-		if plateNo == "" {
-			udm.logger.Warnf("⚠️ API2 데이터에 차량번호 없음, 건너뛰기")
-			continue
-		}
-
-		// RouteId 검증
-		if bus.RouteId == 0 {
-			udm.logger.Warnf("⚠️ API2 데이터에서 RouteId 추출 실패 - 차량: %s, RouteNm: %s, 건너뛰기", plateNo, bus.RouteNm)
-			continue
+		if plateNo == "" || bus.RouteId == 0 {
+			continue // 유효하지 않은 데이터는 조용히 건너뛰기
 		}
 
 		// 첫 실행 시 중복 체크
 		if udm.isDuplicateDataForFirstRun(plateNo, bus) {
 			duplicateCount++
-			// 중복이어도 Redis에는 상태 업데이트 (TTL 연장 등)
 			udm.redisBusManager.UpdateBusData(bus, []string{"api2"})
 			continue
 		}
 
-		// Redis에 업데이트하고 위치 변경 여부 확인
+		// Redis 업데이트
 		_, hasLocationChanged, err := udm.redisBusManager.UpdateBusData(bus, []string{"api2"})
 		if err != nil {
-			udm.logger.Errorf("❌ Redis 업데이트 실패 (API2, 차량: %s): %v", plateNo, err)
-			continue
+			continue // 오류는 조용히 처리
 		}
 
 		processedCount++
 
 		if hasLocationChanged {
 			redisChangedCount++
-			udm.logger.Debugf("🔄 Redis 위치 변경 감지 - 차량: %s", plateNo)
-
-			// Redis에서 위치 변경이 있으면 ES 전송 조건 확인 (동일한 로직 사용)
 			if udm.shouldSendToES(plateNo, bus) {
 				esReadyBuses = append(esReadyBuses, bus)
-				udm.logger.Debugf("🎯 ES 전송 대상 추가 (API2) - 차량: %s, NodeOrd: %d, GPS: (%.6f, %.6f)",
-					plateNo, bus.NodeOrd, bus.GpsLati, bus.GpsLong)
-			} else {
-				udm.logger.Debugf("⏸️ ES 전송 조건 미충족 - 차량: %s (간격 부족 또는 기타)", plateNo)
 			}
-		} else {
-			udm.logger.Debugf("🔄 Redis 위치 변경 없음 - 차량: %s", plateNo)
 		}
 	}
 
@@ -268,49 +223,22 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI2Data(busLocations []models.Bu
 		udm.sendBatchToElasticsearch(esReadyBuses, "API2")
 	}
 
-	udm.logger.Infof("🟨 API2 배치 처리 완료 - 총: %d건, 처리: %d건, 중복: %d건, Redis변경: %d건, 🔥 ES 전송: %d건",
+	// 🎯 핵심 로그만: 처리 결과 요약
+	udm.logger.Infof("API2 처리완료: 수신=%d, 처리=%d, 중복=%d, 변경=%d, ES전송=%d",
 		len(busLocations), processedCount, duplicateCount, redisChangedCount, len(esReadyBuses))
 }
 
-// sendBatchToElasticsearch ES 배치 전송 (단순화)
+// sendBatchToElasticsearch ES 배치 전송
 func (udm *SimplifiedUnifiedDataManager) sendBatchToElasticsearch(buses []models.BusLocation, source string) {
 	if udm.esService == nil || len(buses) == 0 {
 		return
 	}
 
-	udm.logger.Infof("🔥 ES 배치 전송 (%s): %d건", source, len(buses))
-
-	// 상세 로그 (처음 3개만) - 특별한 이모지 사용
-	for i, bus := range buses {
-		if i >= 3 {
-			break
-		}
-		location := "정보없음"
-		if bus.NodeNm != "" {
-			location = bus.NodeNm
-		} else if bus.NodeId != "" {
-			location = bus.NodeId
-		}
-
-		// 소스별 다른 이모지 사용
-		var sourceEmoji string
-		switch source {
-		case "API1":
-			sourceEmoji = "🟦" // 파란 사각형
-		case "API2":
-			sourceEmoji = "🟨" // 노란 사각형
-		case "Redis-Sync":
-			sourceEmoji = "🟪" // 보라 사각형
-		default:
-			sourceEmoji = "⚫" // 검은 원
-		}
-
-		udm.logger.Infof("⚡ ES 전송 [%d/%d] %s 차량: %s, 노선: %s (RouteId: %d), 위치: %s",
-			i+1, len(buses), sourceEmoji, bus.PlateNo, bus.RouteNm, bus.RouteId, location)
-	}
+	// 🎯 핵심 로그만: ES 전송 시작과 결과
+	udm.logger.Infof("ES 전송 시작: %s %d건", source, len(buses))
 
 	if err := udm.esService.BulkSendBusLocations(udm.indexName, buses); err != nil {
-		udm.logger.Errorf("❌ ES 배치 전송 실패 (%s): %v", source, err)
+		udm.logger.Errorf("ES 전송 실패 (%s): %v", source, err)
 		return
 	}
 
@@ -321,16 +249,16 @@ func (udm *SimplifiedUnifiedDataManager) sendBatchToElasticsearch(buses []models
 	}
 
 	if err := udm.redisBusManager.MarkAsSynced(plateNos); err != nil {
-		udm.logger.Errorf("⚠️ Redis 동기화 마킹 실패: %v", err)
+		udm.logger.Errorf("Redis 동기화 마킹 실패: %v", err)
 	}
 
 	udm.lastESSync = time.Now()
 
-	// 성공 메시지도 눈에 띄게
-	udm.logger.Infof("✅ ES 배치 전송 성공 (%s): %d건 완료", source, len(buses))
+	// 🎯 핵심 로그만: 성공 메시지
+	udm.logger.Infof("ES 전송 완료: %s %d건", source, len(buses))
 }
 
-// StartPeriodicESSync 주기적 ES 동기화 시작 (단순화)
+// StartPeriodicESSync 주기적 ES 동기화 시작
 func (udm *SimplifiedUnifiedDataManager) StartPeriodicESSync() {
 	udm.syncMutex.Lock()
 	defer udm.syncMutex.Unlock()
@@ -343,8 +271,8 @@ func (udm *SimplifiedUnifiedDataManager) StartPeriodicESSync() {
 	udm.syncRunning = true
 
 	go func() {
-		udm.logger.Info("🔄 Redis -> ES 주기적 동기화 시작")
-		defer udm.logger.Info("🔄 Redis -> ES 주기적 동기화 종료")
+		udm.logger.Info("Redis->ES 주기 동기화 시작")
+		defer udm.logger.Info("Redis->ES 주기 동기화 종료")
 
 		for {
 			select {
@@ -357,7 +285,7 @@ func (udm *SimplifiedUnifiedDataManager) StartPeriodicESSync() {
 	}()
 }
 
-// StopPeriodicESSync 주기적 ES 동기화 중지 (단순화)
+// StopPeriodicESSync 주기적 ES 동기화 중지
 func (udm *SimplifiedUnifiedDataManager) StopPeriodicESSync() {
 	udm.syncMutex.Lock()
 	defer udm.syncMutex.Unlock()
@@ -373,20 +301,20 @@ func (udm *SimplifiedUnifiedDataManager) StopPeriodicESSync() {
 	udm.syncRunning = false
 }
 
-// syncRedisToES Redis에서 ES로 동기화 (단순화)
+// syncRedisToES Redis에서 ES로 동기화
 func (udm *SimplifiedUnifiedDataManager) syncRedisToES() {
 	changedBuses, err := udm.redisBusManager.GetChangedBusesForES()
 	if err != nil {
-		udm.logger.Errorf("❌ Redis 변경 데이터 조회 실패: %v", err)
+		udm.logger.Errorf("Redis 변경 데이터 조회 실패: %v", err)
 		return
 	}
 
 	if len(changedBuses) == 0 {
-		udm.logger.Debugf("🔄 Redis -> ES 동기화: 변경된 데이터 없음")
-		return
+		return // 변경 없으면 조용히 리턴
 	}
 
-	udm.logger.Infof("🟪 Redis -> ES 동기화: %d건 발견", len(changedBuses))
+	// 🎯 핵심 로그만: Redis 동기화 발견
+	udm.logger.Infof("Redis 동기화: %d건 발견", len(changedBuses))
 
 	// 배치 크기로 나누어 전송
 	for i := 0; i < len(changedBuses); i += udm.batchSize {
@@ -398,12 +326,11 @@ func (udm *SimplifiedUnifiedDataManager) syncRedisToES() {
 		batch := changedBuses[i:end]
 		udm.sendBatchToElasticsearch(batch, "Redis-Sync")
 
-		// 배치 간 잠시 대기
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-// CleanupOldData 정리 작업 (Redis 중심)
+// CleanupOldData 정리 작업
 func (udm *SimplifiedUnifiedDataManager) CleanupOldData(maxAge time.Duration) int {
 	cleanedCount, err := udm.redisBusManager.CleanupInactiveBuses(maxAge)
 	if err != nil {
@@ -411,20 +338,20 @@ func (udm *SimplifiedUnifiedDataManager) CleanupOldData(maxAge time.Duration) in
 		return 0
 	}
 
+	// 🎯 핵심 로그만: 정리 결과 (정리된 것이 있을 때만)
 	if cleanedCount > 0 {
-		udm.logger.Infof("Redis 데이터 정리 완료 - 제거된 버스: %d대", cleanedCount)
+		udm.logger.Infof("데이터 정리 완료: %d대 제거", cleanedCount)
 	}
 
 	return cleanedCount
 }
 
-// GetStatistics 통계 정보 반환 (단순화)
+// GetStatistics 통계 정보 반환
 func (udm *SimplifiedUnifiedDataManager) GetStatistics() (int, int, int, int) {
-	// 단순히 0 반환 (통계 기능 제거)
 	return 0, 0, 0, 0
 }
 
-// shouldSendToES ES 전송 전 최종 체크 (단순화)
+// shouldSendToES ES 전송 전 최종 체크
 func (udm *SimplifiedUnifiedDataManager) shouldSendToES(plateNo string, bus models.BusLocation) bool {
 	// 최소 간격 체크 (10초)
 	minInterval := 10 * time.Second
@@ -433,22 +360,18 @@ func (udm *SimplifiedUnifiedDataManager) shouldSendToES(plateNo string, bus mode
 	if err == nil && !lastSyncTime.IsZero() {
 		timeSinceLastSync := time.Since(lastSyncTime)
 		if timeSinceLastSync < minInterval {
-			udm.logger.Debugf("ES 전송 간격 부족 - 차량: %s, 경과시간: %v (최소: %v)",
-				plateNo, timeSinceLastSync, minInterval)
 			return false
 		}
 	}
 
-	// 위치 변경 확인 (단순화)
 	return udm.isLocationChanged(plateNo, bus)
 }
 
-// isLocationChanged 위치 변경 여부 확인 (단순화)
+// isLocationChanged 위치 변경 여부 확인
 func (udm *SimplifiedUnifiedDataManager) isLocationChanged(plateNo string, bus models.BusLocation) bool {
 	lastESData, err := udm.redisBusManager.GetLastESData(plateNo)
 	if err != nil || lastESData == nil {
-		udm.logger.Debugf("🆕 첫 ES 전송 또는 마지막 데이터 없음 - 차량: %s", plateNo)
-		return true
+		return true // 첫 전송 또는 데이터 없음
 	}
 
 	// 정류장 순서 비교
@@ -462,26 +385,10 @@ func (udm *SimplifiedUnifiedDataManager) isLocationChanged(plateNo string, bus m
 		return true
 	}
 
-	if currentOrder != lastOrder {
-		udm.logger.Infof("🚏 정류장 순서 변경 감지 - 차량: %s, %d -> %d", plateNo, lastOrder, currentOrder)
-		return true
-	}
-
-	// StationId 비교
-	if bus.StationId != lastESData.StationId && bus.StationId > 0 && lastESData.StationId > 0 {
-		udm.logger.Infof("🆔 StationId 변경 감지 - 차량: %s, %d -> %d", plateNo, lastESData.StationId, bus.StationId)
-		return true
-	}
-
-	// NodeId 비교 (API2용)
-	if bus.NodeId != lastESData.NodeId && bus.NodeId != "" && lastESData.NodeId != "" {
-		udm.logger.Infof("🏷️ NodeId 변경 감지 - 차량: %s, %s -> %s", plateNo, lastESData.NodeId, bus.NodeId)
-		return true
-	}
-
-	udm.logger.Debugf("🔄 위치 변경 없음 - 차량: %s (순서: %d, StationId: %d, NodeId: %s)",
-		plateNo, currentOrder, bus.StationId, bus.NodeId)
-	return false
+	// 위치 변경 체크 (상세 로그 제거)
+	return currentOrder != lastOrder ||
+		(bus.StationId != lastESData.StationId && bus.StationId > 0 && lastESData.StationId > 0) ||
+		(bus.NodeId != lastESData.NodeId && bus.NodeId != "" && lastESData.NodeId != "")
 }
 
 // GetActiveBusesByRoute 노선별 활성 버스 조회

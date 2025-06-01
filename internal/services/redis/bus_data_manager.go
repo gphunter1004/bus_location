@@ -454,22 +454,6 @@ func (rbm *RedisBusDataManager) hasLocationChanged(existing *RedisBusData, new m
 		return true
 	}
 
-	// 정류장 순서 기반 위치 정보만 비교
-	stationIdChanged := existing.StationId != new.StationId
-	stationSeqChanged := existing.StationSeq != new.StationSeq
-	nodeOrdChanged := existing.NodeOrd != new.NodeOrd
-	nodeIdChanged := existing.NodeId != new.NodeId
-
-	// 위치 변경 상세 로깅
-	if stationIdChanged || stationSeqChanged || nodeOrdChanged || nodeIdChanged {
-		rbm.logger.Debugf("정류장 위치 변경 감지 - 차량: %s", new.PlateNo)
-		rbm.logger.Debugf("  StationId: %d -> %d (변경: %t)", existing.StationId, new.StationId, stationIdChanged)
-		rbm.logger.Debugf("  StationSeq: %d -> %d (변경: %t)", existing.StationSeq, new.StationSeq, stationSeqChanged)
-		rbm.logger.Debugf("  NodeOrd: %d -> %d (변경: %t)", existing.NodeOrd, new.NodeOrd, nodeOrdChanged)
-		rbm.logger.Debugf("  NodeId: %s -> %s (변경: %t)", existing.NodeId, new.NodeId, nodeIdChanged)
-		return true
-	}
-
 	rbm.logger.Debugf("정류장 위치 변경 없음 - 차량: %s", new.PlateNo)
 	return false
 }
