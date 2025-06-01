@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"bus-tracker/internal/utils"
@@ -11,12 +10,22 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// APIConfig 개별 API 설정 (Enabled 필드 제거)
+// APIConfig 개별 API 설정
 type APIConfig struct {
 	Interval time.Duration `json:"interval"` // 호출 주기
 	BaseURL  string        `json:"baseURL"`  // API URL
 	RouteIDs []string      `json:"routeIDs"` // 대상 노선
 	Priority int           `json:"priority"` // 우선순위 (낮을수록 우선)
+}
+
+// RedisConfig Redis 설정 구조체
+type RedisConfig struct {
+	Addr        string `json:"addr"`        // Redis 주소 (예: localhost:6379)
+	Password    string `json:"password"`    // Redis 비밀번호
+	DB          int    `json:"db"`          // Redis DB 번호
+	MaxRetries  int    `json:"maxRetries"`  // 최대 재시도 횟수
+	PoolSize    int    `json:"poolSize"`    // 연결 풀 크기
+	IdleTimeout int    `json:"idleTimeout"` // 유휴 연결 타임아웃 (초)
 }
 
 // Config 애플리케이션 설정 구조체 (통합 모드 전용)
@@ -31,13 +40,16 @@ type Config struct {
 	ElasticsearchPassword string
 	IndexName             string
 
+	// Redis 설정
+	Redis RedisConfig
+
 	// 운영 시간 설정
 	OperatingStartHour   int // 운영 시작 시간 (24시간 형식)
 	OperatingStartMinute int // 운영 시작 분
 	OperatingEndHour     int // 운영 종료 시간 (24시간 형식)
 	OperatingEndMinute   int // 운영 종료 분
 
-	// 🔧 새로운 버스 트래킹 종료 조건 설정 (2가지만)
+	// 버스 트래킹 종료 조건 설정
 	BusCleanupInterval      time.Duration // 버스 정리 작업 주기 (기본: 5분)
 	BusDisappearanceTimeout time.Duration // 버스 미목격 종료 시간 (기본: 10분)
 	EnableTerminalStop      bool          // 종점 도착 시 종료 활성화 (기본: true)
@@ -60,18 +72,8 @@ func LoadConfig() *Config {
 		log.Println(".env 파일을 성공적으로 로드했습니다.")
 	}
 
-	// 🔧 임시 디버깅: 환경변수 값들을 직접 출력
-	log.Printf("DEBUG - OPERATING_START_HOUR: '%s'", os.Getenv("OPERATING_START_HOUR"))
-	log.Printf("DEBUG - OPERATING_START_MINUTE: '%s'", os.Getenv("OPERATING_START_MINUTE"))
-	log.Printf("DEBUG - OPERATING_END_HOUR: '%s'", os.Getenv("OPERATING_END_HOUR"))
-	log.Printf("DEBUG - OPERATING_END_MINUTE: '%s'", os.Getenv("OPERATING_END_MINUTE"))
-	log.Printf("DEBUG - BUS_CLEANUP_INTERVAL_MINUTES: '%s'", os.Getenv("BUS_CLEANUP_INTERVAL_MINUTES"))
-	log.Printf("DEBUG - BUS_DISAPPEARANCE_TIMEOUT_MINUTES: '%s'", os.Getenv("BUS_DISAPPEARANCE_TIMEOUT_MINUTES"))
-	log.Printf("DEBUG - ENABLE_TERMINAL_STOP: '%s'", os.Getenv("ENABLE_TERMINAL_STOP"))
-	log.Printf("DEBUG - DATA_MERGE_INTERVAL_SECONDS: '%s'", os.Getenv("DATA_MERGE_INTERVAL_SECONDS"))
-	log.Printf("DEBUG - DATA_RETENTION_MINUTES: '%s'", os.Getenv("DATA_RETENTION_MINUTES"))
-	log.Printf("DEBUG - API1_INTERVAL_SECONDS: '%s'", os.Getenv("API1_INTERVAL_SECONDS"))
-	log.Printf("DEBUG - API2_INTERVAL_SECONDS: '%s'", os.Getenv("API2_INTERVAL_SECONDS"))
+	// 환경변수 디버깅 출력
+	debugEnvironmentVariables()
 
 	cfg := &Config{
 		// 기본 인증 정보
@@ -84,16 +86,26 @@ func LoadConfig() *Config {
 		ElasticsearchPassword: getEnv("ELASTICSEARCH_PASSWORD", ""),
 		IndexName:             getEnv("INDEX_NAME", "bus-locations"),
 
+		// Redis 설정
+		Redis: RedisConfig{
+			Addr:        getEnv("REDIS_ADDR", "localhost:6379"),
+			Password:    getEnv("REDIS_PASSWORD", ""),
+			DB:          getIntEnv("REDIS_DB", 0),
+			MaxRetries:  getIntEnv("REDIS_MAX_RETRIES", 3),
+			PoolSize:    getIntEnv("REDIS_POOL_SIZE", 10),
+			IdleTimeout: getIntEnv("REDIS_IDLE_TIMEOUT", 300), // 5분
+		},
+
 		// 운영 시간 기본값: 04:55 ~ 01:00
 		OperatingStartHour:   getIntEnv("OPERATING_START_HOUR", 4),
 		OperatingStartMinute: getIntEnv("OPERATING_START_MINUTE", 55),
 		OperatingEndHour:     getIntEnv("OPERATING_END_HOUR", 1),
 		OperatingEndMinute:   getIntEnv("OPERATING_END_MINUTE", 0),
 
-		// 🔧 새로운 버스 트래킹 종료 조건 설정
-		BusCleanupInterval:      getDurationMinutes("BUS_CLEANUP_INTERVAL_MINUTES", 5),       // 5분 (정리 작업 주기)
-		BusDisappearanceTimeout: getDurationMinutes("BUS_DISAPPEARANCE_TIMEOUT_MINUTES", 10), // 10분 (미목격 종료 시간)
-		EnableTerminalStop:      getBoolEnv("ENABLE_TERMINAL_STOP", true),                    // true (종점 도착 시 종료)
+		// 버스 트래킹 종료 조건 설정
+		BusCleanupInterval:      getDurationMinutes("BUS_CLEANUP_INTERVAL_MINUTES", 5),       // 5분
+		BusDisappearanceTimeout: getDurationMinutes("BUS_DISAPPEARANCE_TIMEOUT_MINUTES", 10), // 10분
+		EnableTerminalStop:      getBoolEnv("ENABLE_TERMINAL_STOP", true),                    // true
 
 		// 통합 처리 설정
 		DataMergeInterval:   getDuration("DATA_MERGE_INTERVAL_SECONDS", 10),  // 10초
@@ -136,6 +148,19 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("SERVICE_KEY가 설정되지 않았습니다. 환경변수를 확인해주세요")
 	}
 
+	// Redis 설정 검증
+	if utils.Validate.IsEmpty(c.Redis.Addr) {
+		return fmt.Errorf("REDIS_ADDR이 설정되지 않았습니다")
+	}
+
+	if c.Redis.DB < 0 || c.Redis.DB > 15 {
+		return fmt.Errorf("REDIS_DB는 0-15 범위여야 합니다 (현재: %d)", c.Redis.DB)
+	}
+
+	if c.Redis.PoolSize <= 0 {
+		return fmt.Errorf("REDIS_POOL_SIZE는 0보다 커야 합니다 (현재: %d)", c.Redis.PoolSize)
+	}
+
 	// 종료 조건 설정 검증
 	if c.BusDisappearanceTimeout <= 0 {
 		return fmt.Errorf("BUS_DISAPPEARANCE_TIMEOUT_MINUTES는 0보다 커야 합니다 (현재: %v)", c.BusDisappearanceTimeout)
@@ -168,266 +193,4 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
-}
-
-// 환경변수 헬퍼 함수들 - 공용 헬퍼 사용
-
-// getEnv 환경변수 값을 가져오거나 기본값 반환
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); !utils.Validate.IsEmpty(value) {
-		return utils.String.TrimSpace(value)
-	}
-	return defaultValue
-}
-
-// getIntEnv 환경변수에서 정수값을 가져오거나 기본값 반환 (수정된 버전)
-func getIntEnv(key string, defaultValue int) int {
-	value := utils.String.TrimSpace(os.Getenv(key))
-
-	// 🔧 디버깅: 변환 과정 출력
-	log.Printf("DEBUG - getIntEnv('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
-
-	// 새로운 헬퍼 함수 사용 (성공 여부 확인 가능)
-	result, success := utils.Convert.StringToIntWithSuccess(value, defaultValue)
-
-	if value != "" && !success {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %d를 사용합니다.", key, value, defaultValue)
-	}
-
-	log.Printf("DEBUG - getIntEnv('%s'): result=%d (성공: %t)", key, result, success)
-	return result
-}
-
-// getBoolEnv 환경변수에서 불린값을 가져오거나 기본값 반환 (수정된 버전)
-func getBoolEnv(key string, defaultValue bool) bool {
-	value := utils.String.TrimSpace(os.Getenv(key))
-
-	// 🔧 디버깅: 변환 과정 출력
-	log.Printf("DEBUG - getBoolEnv('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
-
-	// 새로운 헬퍼 함수 사용 (성공 여부 확인 가능)
-	result, success := utils.Convert.StringToBoolWithSuccess(value, defaultValue)
-
-	if value != "" && !success {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %t를 사용합니다.", key, value, defaultValue)
-	}
-
-	log.Printf("DEBUG - getBoolEnv('%s'): result=%t (성공: %t)", key, result, success)
-	return result
-}
-
-// getRouteIDList 환경변수에서 RouteID 리스트 파싱 (공용 헬퍼 사용)
-func getRouteIDList(key string) []string {
-	routeIDsEnv := utils.String.TrimSpace(getEnv(key, ""))
-
-	if utils.Validate.IsEmpty(routeIDsEnv) {
-		return []string{}
-	}
-
-	// 쉼표로 분리하고 공백 제거 (공용 헬퍼 사용)
-	routeIDs := utils.String.Split(routeIDsEnv, ",")
-
-	// 빈 문자열 제거 및 공백 정리 (공용 헬퍼 사용)
-	var cleanRouteIDs []string
-	for _, id := range routeIDs {
-		cleanID := utils.String.TrimSpace(id)
-		if !utils.Validate.IsEmpty(cleanID) {
-			cleanRouteIDs = append(cleanRouteIDs, cleanID)
-		}
-	}
-
-	// 중복 제거 (공용 헬퍼 사용)
-	return utils.Slice.RemoveDuplicateStrings(cleanRouteIDs)
-}
-
-// getDuration 환경변수에서 duration 파싱 (수정된 버전)
-func getDuration(key string, defaultSeconds int) time.Duration {
-	value := utils.String.TrimSpace(os.Getenv(key))
-
-	// 🔧 디버깅: 변환 과정 출력
-	log.Printf("DEBUG - getDuration('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
-
-	// 정수 변환 시도
-	intValue, success := utils.Convert.StringToIntWithSuccess(value, defaultSeconds)
-
-	if value != "" && !success {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %d초를 사용합니다.", key, value, defaultSeconds)
-	}
-
-	result := time.Duration(intValue) * time.Second
-	log.Printf("DEBUG - getDuration('%s'): result=%v (성공: %t)", key, result, success)
-	return result
-}
-
-// getDurationMinutes 환경변수에서 분 단위 duration 파싱 (수정된 버전)
-func getDurationMinutes(key string, defaultMinutes int) time.Duration {
-	value := utils.String.TrimSpace(os.Getenv(key))
-
-	// 🔧 디버깅: 변환 과정 출력
-	log.Printf("DEBUG - getDurationMinutes('%s'): raw='%s', trimmed='%s'", key, os.Getenv(key), value)
-
-	// 정수 변환 시도
-	intValue, success := utils.Convert.StringToIntWithSuccess(value, defaultMinutes)
-
-	if value != "" && !success {
-		log.Printf("환경변수 %s 값이 올바르지 않습니다 ('%s'). 기본값 %d분을 사용합니다.", key, value, defaultMinutes)
-	}
-
-	result := time.Duration(intValue) * time.Minute
-	log.Printf("DEBUG - getDurationMinutes('%s'): result=%v (성공: %t)", key, result, success)
-	return result
-}
-
-// IsOperatingTime 현재 시간이 운영 시간인지 확인
-func (c *Config) IsOperatingTime(currentTime time.Time) bool {
-	hour := currentTime.Hour()
-	minute := currentTime.Minute()
-
-	startHour := c.OperatingStartHour
-	startMinute := c.OperatingStartMinute
-	endHour := c.OperatingEndHour
-	endMinute := c.OperatingEndMinute
-
-	// 현재 시간을 분 단위로 변환 (하루 = 1440분)
-	currentMinutes := hour*60 + minute
-	startMinutes := startHour*60 + startMinute
-	endMinutes := endHour*60 + endMinute
-
-	// 시작 시간이 종료 시간보다 작은 경우 (예: 06:00 ~ 10:00)
-	if startMinutes < endMinutes {
-		return currentMinutes >= startMinutes && currentMinutes < endMinutes
-	}
-
-	// 시작 시간이 종료 시간보다 큰 경우 (예: 22:00 ~ 06:00, 자정을 넘어가는 경우)
-	if startMinutes > endMinutes {
-		return currentMinutes >= startMinutes || currentMinutes < endMinutes
-	}
-
-	// 시작 시간과 종료 시간이 같은 경우 (24시간 운영)
-	return true
-}
-
-// GetNextOperatingTime 다음 운영 시작 시간 반환
-func (c *Config) GetNextOperatingTime(currentTime time.Time) time.Time {
-	startHour := c.OperatingStartHour
-	startMinute := c.OperatingStartMinute
-
-	// 당일 시작 시간 계산
-	todayStart := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(),
-		startHour, startMinute, 0, 0, currentTime.Location())
-
-	// 현재 시간이 당일 시작 시간 이전이면 당일 시작 시간 반환
-	if currentTime.Before(todayStart) {
-		return todayStart
-	}
-
-	// 그렇지 않으면 다음날 시작 시간 반환
-	nextDay := currentTime.AddDate(0, 0, 1)
-	return time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(),
-		startHour, startMinute, 0, 0, currentTime.Location())
-}
-
-// PrintConfig 현재 설정을 출력 (디버깅용)
-func (c *Config) PrintConfig() {
-	log.Println("=== 버스 트래커 설정 (통합 모드) ===")
-
-	// ServiceKey 마스킹 (공용 헬퍼 사용)
-	maskedServiceKey := utils.String.MaskSensitive(c.ServiceKey, 10, 4)
-	log.Printf("Service Key: %s", maskedServiceKey)
-
-	log.Printf("City Code: %s", c.CityCode)
-	log.Printf("Elasticsearch URL: %s", c.ElasticsearchURL)
-	log.Printf("Index Name: %s", c.IndexName)
-
-	// 통합 모드 설정 출력
-	log.Printf("=== 통합 모드 설정 ===")
-	log.Printf("데이터 통합 주기: %v", c.DataMergeInterval)
-	log.Printf("데이터 보존 기간: %v", c.DataRetentionPeriod)
-
-	// 🔧 새로운 종료 조건 설정 출력
-	log.Printf("=== 버스 트래킹 종료 조건 ===")
-	log.Printf("버스 미목격 종료 시간: %v", c.BusDisappearanceTimeout)
-	log.Printf("종점 도착 시 종료: %t", c.EnableTerminalStop)
-	log.Printf("정리 작업 주기: %v", c.BusCleanupInterval)
-
-	// API1 설정
-	log.Printf("=== API1 설정 ===")
-	log.Printf("주기: %v, 노선수: %d개", c.API1Config.Interval, len(c.API1Config.RouteIDs))
-	if len(c.API1Config.RouteIDs) > 0 {
-		log.Printf("노선들: %v", c.API1Config.RouteIDs)
-	}
-	log.Printf("Base URL: %s", c.API1Config.BaseURL)
-	log.Printf("우선순위: %d", c.API1Config.Priority)
-
-	// API2 설정
-	log.Printf("=== API2 설정 ===")
-	log.Printf("주기: %v, 노선수: %d개", c.API2Config.Interval, len(c.API2Config.RouteIDs))
-	if len(c.API2Config.RouteIDs) > 0 {
-		log.Printf("노선들: %v", c.API2Config.RouteIDs)
-	}
-	log.Printf("Base URL: %s", c.API2Config.BaseURL)
-	log.Printf("우선순위: %d", c.API2Config.Priority)
-
-	// 운영 시간 설정
-	log.Printf("=== 운영 시간 설정 ===")
-	log.Printf("운영 시간: %02d:%02d ~ %02d:%02d",
-		c.OperatingStartHour, c.OperatingStartMinute, c.OperatingEndHour, c.OperatingEndMinute)
-
-	// Elasticsearch 설정
-	log.Printf("=== Elasticsearch 설정 ===")
-	log.Printf("URL: %s", c.ElasticsearchURL)
-	if !utils.Validate.IsEmpty(c.ElasticsearchUsername) {
-		maskedUsername := utils.String.MaskSensitive(c.ElasticsearchUsername, 2, 2)
-		log.Printf("인증: %s / ***", maskedUsername)
-	} else {
-		log.Printf("인증: 없음")
-	}
-	log.Printf("인덱스: %s", c.IndexName)
-
-	// 설정 검증 상태
-	log.Printf("=== 설정 검증 상태 ===")
-	if err := c.Validate(); err != nil {
-		log.Printf("❌ 검증 실패: %v", err)
-	} else {
-		log.Printf("✅ 모든 설정이 유효합니다")
-	}
-
-	log.Println("====================================")
-}
-
-// GetConfigSummary 설정 요약 정보 반환 (웹 API용)
-func (c *Config) GetConfigSummary() map[string]interface{} {
-	return map[string]interface{}{
-		"serviceKey": map[string]interface{}{
-			"configured": !utils.Validate.IsEmpty(c.ServiceKey),
-			"masked":     utils.String.MaskSensitive(c.ServiceKey, 6, 4),
-		},
-		"apis": map[string]interface{}{
-			"api1": map[string]interface{}{
-				"enabled":    len(c.API1Config.RouteIDs) > 0,
-				"routeCount": len(c.API1Config.RouteIDs),
-				"interval":   c.API1Config.Interval.String(),
-			},
-			"api2": map[string]interface{}{
-				"enabled":    len(c.API2Config.RouteIDs) > 0,
-				"routeCount": len(c.API2Config.RouteIDs),
-				"interval":   c.API2Config.Interval.String(),
-			},
-		},
-		"elasticsearch": map[string]interface{}{
-			"url":       c.ElasticsearchURL,
-			"hasAuth":   !utils.Validate.IsEmpty(c.ElasticsearchUsername),
-			"indexName": c.IndexName,
-		},
-		"operatingTime": map[string]interface{}{
-			"start":    fmt.Sprintf("%02d:%02d", c.OperatingStartHour, c.OperatingStartMinute),
-			"end":      fmt.Sprintf("%02d:%02d", c.OperatingEndHour, c.OperatingEndMinute),
-			"is24Hour": c.OperatingStartHour == c.OperatingEndHour && c.OperatingStartMinute == c.OperatingEndMinute,
-		},
-		"tracking": map[string]interface{}{
-			"disappearanceTimeout": c.BusDisappearanceTimeout.String(),
-			"enableTerminalStop":   c.EnableTerminalStop,
-			"cleanupInterval":      c.BusCleanupInterval.String(),
-		},
-	}
 }
