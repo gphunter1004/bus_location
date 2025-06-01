@@ -1,3 +1,4 @@
+// internal/services/orchestrator.go - Redis 중심 단순화 버전
 package services
 
 import (
@@ -10,8 +11,8 @@ import (
 	"bus-tracker/internal/utils"
 )
 
-// MultiAPIOrchestrator 통합 캐시를 지원하는 다중 API 오케스트레이터 (Redis 기반)
-type MultiAPIOrchestrator struct {
+// SimplifiedMultiAPIOrchestrator Redis 중심 단순화된 다중 API 오케스트레이터
+type SimplifiedMultiAPIOrchestrator struct {
 	config      *config.Config
 	logger      *utils.Logger
 	api1Client  *api.API1Client
@@ -26,14 +27,14 @@ type MultiAPIOrchestrator struct {
 	mutex     sync.RWMutex
 }
 
-// NewMultiAPIOrchestrator 새로운 다중 API 오케스트레이터 생성
-func NewMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
+// NewSimplifiedMultiAPIOrchestrator 단순화된 다중 API 오케스트레이터 생성
+func NewSimplifiedMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
 	api1Client *api.API1Client, api2Client *api.API2Client,
-	dataManager UnifiedDataManagerInterface) *MultiAPIOrchestrator {
+	dataManager UnifiedDataManagerInterface) *SimplifiedMultiAPIOrchestrator {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &MultiAPIOrchestrator{
+	return &SimplifiedMultiAPIOrchestrator{
 		config:      cfg,
 		logger:      logger,
 		api1Client:  api1Client,
@@ -45,237 +46,234 @@ func NewMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
 	}
 }
 
-// Start 오케스트레이터 시작
-func (mao *MultiAPIOrchestrator) Start() error {
-	mao.mutex.Lock()
-	defer mao.mutex.Unlock()
+// Start 오케스트레이터 시작 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) Start() error {
+	sao.mutex.Lock()
+	defer sao.mutex.Unlock()
 
-	if mao.isRunning {
+	if sao.isRunning {
 		return nil
 	}
 
 	// Redis 기반 주기적 ES 동기화 시작
-	mao.dataManager.StartPeriodicESSync()
+	sao.dataManager.StartPeriodicESSync()
 
-	// API1 워커 시작 (노선이 설정된 경우)
-	if len(mao.config.API1Config.RouteIDs) > 0 && mao.api1Client != nil {
-		mao.wg.Add(1)
-		go mao.runAPI1Worker()
+	// API1 워커 시작
+	if len(sao.config.API1Config.RouteIDs) > 0 && sao.api1Client != nil {
+		sao.wg.Add(1)
+		go sao.runAPI1Worker()
 	}
 
-	// API2 워커 시작 (노선이 설정된 경우)
-	if len(mao.config.API2Config.RouteIDs) > 0 && mao.api2Client != nil {
-		mao.wg.Add(1)
-		go mao.runAPI2Worker()
+	// API2 워커 시작
+	if len(sao.config.API2Config.RouteIDs) > 0 && sao.api2Client != nil {
+		sao.wg.Add(1)
+		go sao.runAPI2Worker()
 	}
 
 	// 정리 워커 시작
-	mao.wg.Add(1)
-	go mao.runCleanupWorker()
+	sao.wg.Add(1)
+	go sao.runCleanupWorker()
 
-	mao.isRunning = true
-	mao.logger.Info("✅ 멀티 API 오케스트레이터 시작 완료 (Redis 기반)")
+	sao.isRunning = true
+	sao.logger.Info("✅ 단순화된 멀티 API 오케스트레이터 시작 완료")
 
 	return nil
 }
 
-// runAPI1Worker API1 워커 실행
-func (mao *MultiAPIOrchestrator) runAPI1Worker() {
-	defer mao.wg.Done()
+// runAPI1Worker API1 워커 실행 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) runAPI1Worker() {
+	defer sao.wg.Done()
 
-	ticker := time.NewTicker(mao.config.API1Config.Interval)
+	ticker := time.NewTicker(sao.config.API1Config.Interval)
 	defer ticker.Stop()
 
-	mao.logger.Infof("🔄 API1 워커 시작 - 주기: %v, 노선: %d개",
-		mao.config.API1Config.Interval, len(mao.config.API1Config.RouteIDs))
+	sao.logger.Infof("🔄 API1 워커 시작 - 주기: %v, 노선: %d개",
+		sao.config.API1Config.Interval, len(sao.config.API1Config.RouteIDs))
 
 	// 첫 번째 즉시 실행
-	if mao.config.IsOperatingTime(time.Now()) {
-		mao.processAPI1Call()
+	if sao.config.IsOperatingTime(time.Now()) {
+		sao.processAPI1Call()
 	}
 
 	for {
 		select {
-		case <-mao.ctx.Done():
-			mao.logger.Info("🔄 API1 워커 종료")
+		case <-sao.ctx.Done():
+			sao.logger.Info("🔄 API1 워커 종료")
 			return
 		case <-ticker.C:
-			if mao.config.IsOperatingTime(time.Now()) {
-				mao.processAPI1Call()
+			if sao.config.IsOperatingTime(time.Now()) {
+				sao.processAPI1Call()
 			} else {
-				mao.logger.Debugf("API1 호출 건너뛰기 - 운영시간 외")
+				sao.logger.Debugf("API1 호출 건너뛰기 - 운영시간 외")
 			}
 		}
 	}
 }
 
-// runAPI2Worker API2 워커 실행
-func (mao *MultiAPIOrchestrator) runAPI2Worker() {
-	defer mao.wg.Done()
+// runAPI2Worker API2 워커 실행 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) runAPI2Worker() {
+	defer sao.wg.Done()
 
-	ticker := time.NewTicker(mao.config.API2Config.Interval)
+	ticker := time.NewTicker(sao.config.API2Config.Interval)
 	defer ticker.Stop()
 
-	mao.logger.Infof("🔄 API2 워커 시작 - 주기: %v, 노선: %d개",
-		mao.config.API2Config.Interval, len(mao.config.API2Config.RouteIDs))
+	sao.logger.Infof("🔄 API2 워커 시작 - 주기: %v, 노선: %d개",
+		sao.config.API2Config.Interval, len(sao.config.API2Config.RouteIDs))
 
-	// API1과 시간차를 두어 시작 (순차 시작으로 부하 분산)
+	// API1과 시간차를 두어 시작
 	time.Sleep(3 * time.Second)
 
 	// 첫 번째 즉시 실행
-	if mao.config.IsOperatingTime(time.Now()) {
-		mao.processAPI2Call()
+	if sao.config.IsOperatingTime(time.Now()) {
+		sao.processAPI2Call()
 	}
 
 	for {
 		select {
-		case <-mao.ctx.Done():
-			mao.logger.Info("🔄 API2 워커 종료")
+		case <-sao.ctx.Done():
+			sao.logger.Info("🔄 API2 워커 종료")
 			return
 		case <-ticker.C:
-			if mao.config.IsOperatingTime(time.Now()) {
-				mao.processAPI2Call()
+			if sao.config.IsOperatingTime(time.Now()) {
+				sao.processAPI2Call()
 			} else {
-				mao.logger.Debugf("API2 호출 건너뛰기 - 운영시간 외")
+				sao.logger.Debugf("API2 호출 건너뛰기 - 운영시간 외")
 			}
 		}
 	}
 }
 
-// runCleanupWorker 정리 워커 (Redis 기반)
-func (mao *MultiAPIOrchestrator) runCleanupWorker() {
-	defer mao.wg.Done()
+// runCleanupWorker 정리 워커 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) runCleanupWorker() {
+	defer sao.wg.Done()
 
-	ticker := time.NewTicker(mao.config.BusCleanupInterval)
+	ticker := time.NewTicker(sao.config.BusCleanupInterval)
 	defer ticker.Stop()
 
-	mao.logger.Infof("🧹 정리 워커 시작 - 주기: %v", mao.config.BusCleanupInterval)
+	sao.logger.Infof("🧹 정리 워커 시작 - 주기: %v", sao.config.BusCleanupInterval)
 
 	for {
 		select {
-		case <-mao.ctx.Done():
-			mao.logger.Info("🧹 정리 워커 종료")
+		case <-sao.ctx.Done():
+			sao.logger.Info("🧹 정리 워커 종료")
 			return
 		case <-ticker.C:
-			mao.processCleanup()
+			sao.processCleanup()
 		}
 	}
 }
 
-// processAPI1Call API1 호출 처리
-func (mao *MultiAPIOrchestrator) processAPI1Call() {
-	if mao.api1Client == nil {
+// processAPI1Call API1 호출 처리 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) processAPI1Call() {
+	if sao.api1Client == nil {
 		return
 	}
 
 	start := time.Now()
-	busLocations, err := mao.api1Client.FetchAllBusLocations(mao.config.API1Config.RouteIDs)
+	busLocations, err := sao.api1Client.FetchAllBusLocations(sao.config.API1Config.RouteIDs)
 	duration := time.Since(start)
 
 	if err != nil {
-		mao.logger.Errorf("API1 호출 실패 (소요시간: %v): %v", duration, err)
+		sao.logger.Errorf("API1 호출 실패 (소요시간: %v): %v", duration, err)
 		return
 	}
 
-	mao.logger.Infof("API1 호출 완료 - %d건 수신 (소요시간: %v)", len(busLocations), duration)
-	mao.dataManager.UpdateAPI1Data(busLocations)
+	sao.logger.Infof("API1 호출 완료 - %d건 수신 (소요시간: %v)", len(busLocations), duration)
+
+	// 단순화된 데이터 매니저로 전달
+	sao.dataManager.UpdateAPI1Data(busLocations)
 }
 
-// processAPI2Call API2 호출 처리
-func (mao *MultiAPIOrchestrator) processAPI2Call() {
-	if mao.api2Client == nil {
+// processAPI2Call API2 호출 처리 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) processAPI2Call() {
+	if sao.api2Client == nil {
 		return
 	}
 
 	start := time.Now()
-	busLocations, err := mao.api2Client.FetchAllBusLocations(mao.config.API2Config.RouteIDs)
+	busLocations, err := sao.api2Client.FetchAllBusLocations(sao.config.API2Config.RouteIDs)
 	duration := time.Since(start)
 
 	if err != nil {
-		mao.logger.Errorf("API2 호출 실패 (소요시간: %v): %v", duration, err)
+		sao.logger.Errorf("API2 호출 실패 (소요시간: %v): %v", duration, err)
 		return
 	}
 
-	mao.logger.Infof("API2 호출 완료 - %d건 수신 (소요시간: %v)", len(busLocations), duration)
-	mao.dataManager.UpdateAPI2Data(busLocations)
+	sao.logger.Infof("API2 호출 완료 - %d건 수신 (소요시간: %v)", len(busLocations), duration)
+
+	// 단순화된 데이터 매니저로 전달
+	sao.dataManager.UpdateAPI2Data(busLocations)
 }
 
-// processCleanup 정리 작업 (Redis 기반)
-func (mao *MultiAPIOrchestrator) processCleanup() {
-	// Redis 기반 통합 데이터 매니저에서 정리 작업 수행
-	cleanedCount := mao.dataManager.CleanupOldData(mao.config.DataRetentionPeriod)
+// processCleanup 정리 작업 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) processCleanup() {
+	cleanedCount := sao.dataManager.CleanupOldData(sao.config.DataRetentionPeriod)
 
 	if cleanedCount > 0 {
-		mao.logger.Infof("정리 작업 완료 - 제거된 버스: %d대", cleanedCount)
+		sao.logger.Infof("정리 작업 완료 - 제거된 버스: %d대", cleanedCount)
 	} else {
-		mao.logger.Debugf("정리 작업 완료 - 제거할 데이터 없음")
+		sao.logger.Debugf("정리 작업 완료 - 제거할 데이터 없음")
 	}
 }
 
-// Stop 오케스트레이터 정지
-func (mao *MultiAPIOrchestrator) Stop() {
-	mao.mutex.Lock()
-	defer mao.mutex.Unlock()
+// Stop 오케스트레이터 정지 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) Stop() {
+	sao.mutex.Lock()
+	defer sao.mutex.Unlock()
 
-	if !mao.isRunning {
+	if !sao.isRunning {
 		return
 	}
 
-	mao.logger.Info("🔄 멀티 API 오케스트레이터 정지 중...")
+	sao.logger.Info("🔄 단순화된 멀티 API 오케스트레이터 정지 중...")
 
 	// Redis 기반 주기적 ES 동기화 중지
-	mao.dataManager.StopPeriodicESSync()
+	sao.dataManager.StopPeriodicESSync()
 
 	// 모든 워커에게 정지 신호 전송
-	mao.cancel()
+	sao.cancel()
 
 	// 모든 워커 완료 대기
-	mao.wg.Wait()
+	sao.wg.Wait()
 
-	mao.isRunning = false
-	mao.logger.Info("✅ 멀티 API 오케스트레이터 정지 완료")
+	sao.isRunning = false
+	sao.logger.Info("✅ 단순화된 멀티 API 오케스트레이터 정지 완료")
 }
 
 // IsRunning 실행 상태 확인
-func (mao *MultiAPIOrchestrator) IsRunning() bool {
-	mao.mutex.RLock()
-	defer mao.mutex.RUnlock()
-	return mao.isRunning
+func (sao *SimplifiedMultiAPIOrchestrator) IsRunning() bool {
+	sao.mutex.RLock()
+	defer sao.mutex.RUnlock()
+	return sao.isRunning
 }
 
-// GetStatistics 통계 정보 반환
-func (mao *MultiAPIOrchestrator) GetStatistics() (totalBuses, api1Only, api2Only, both int) {
-	if mao.dataManager != nil {
-		return mao.dataManager.GetStatistics()
-	}
+// GetStatistics 통계 정보 반환 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) GetStatistics() (totalBuses, api1Only, api2Only, both int) {
+	// 통계 기능 제거
 	return 0, 0, 0, 0
 }
 
-// GetDetailedStatistics 상세 통계 정보 반환 (Redis 기반)
-func (mao *MultiAPIOrchestrator) GetDetailedStatistics() map[string]interface{} {
+// GetDetailedStatistics 상세 통계 정보 반환 (단순화)
+func (sao *SimplifiedMultiAPIOrchestrator) GetDetailedStatistics() map[string]interface{} {
 	stats := make(map[string]interface{})
 
-	// 기본 통계
-	totalBuses, api1Only, api2Only, both := mao.GetStatistics()
-	stats["total_buses"] = totalBuses
-	stats["api1_only"] = api1Only
-	stats["api2_only"] = api2Only
-	stats["both_apis"] = both
-
-	// 오케스트레이터 상태
-	stats["is_running"] = mao.IsRunning()
-	stats["api1_enabled"] = mao.api1Client != nil && len(mao.config.API1Config.RouteIDs) > 0
-	stats["api2_enabled"] = mao.api2Client != nil && len(mao.config.API2Config.RouteIDs) > 0
-
-	// 설정 정보
-	stats["api1_interval"] = mao.config.API1Config.Interval.String()
-	stats["api2_interval"] = mao.config.API2Config.Interval.String()
-	stats["cleanup_interval"] = mao.config.BusCleanupInterval.String()
-	stats["data_retention"] = mao.config.DataRetentionPeriod.String()
-
-	// 운영 시간 정보
-	stats["operating_schedule"] = mao.config.GetOperatingScheduleString()
-	stats["is_operating_time"] = mao.config.IsOperatingTime(time.Now())
+	// 기본 정보만
+	stats["is_running"] = sao.IsRunning()
+	stats["api1_enabled"] = sao.api1Client != nil && len(sao.config.API1Config.RouteIDs) > 0
+	stats["api2_enabled"] = sao.api2Client != nil && len(sao.config.API2Config.RouteIDs) > 0
+	stats["operating_schedule"] = sao.config.GetOperatingScheduleString()
+	stats["is_operating_time"] = sao.config.IsOperatingTime(time.Now())
 
 	return stats
+}
+
+// 타입 별칭 (기존 코드와의 일관성을 위해)
+type MultiAPIOrchestrator = SimplifiedMultiAPIOrchestrator
+
+// 생성자
+func NewMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
+	api1Client *api.API1Client, api2Client *api.API2Client,
+	dataManager UnifiedDataManagerInterface) *MultiAPIOrchestrator {
+
+	return NewSimplifiedMultiAPIOrchestrator(cfg, logger, api1Client, api2Client, dataManager)
 }
