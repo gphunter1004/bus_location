@@ -19,11 +19,11 @@ import (
 type API2Client struct {
 	APIClientBase
 	client       *http.Client
-	stationCache *cache.StationCacheService
+	stationCache cache.StationCacheInterface // 🔄 인터페이스로 변경
 }
 
 // NewAPI2ClientWithSharedCache 공유 캐시를 사용하는 API2 클라이언트 생성 (통합 모드용)
-func NewAPI2ClientWithSharedCache(cfg *config.Config, logger *utils.Logger, sharedCache *cache.StationCacheService) *API2Client {
+func NewAPI2ClientWithSharedCache(cfg *config.Config, logger *utils.Logger, sharedCache cache.StationCacheInterface) *API2Client {
 	return &API2Client{
 		APIClientBase: APIClientBase{
 			config: cfg,
@@ -32,7 +32,7 @@ func NewAPI2ClientWithSharedCache(cfg *config.Config, logger *utils.Logger, shar
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		stationCache: sharedCache,
+		stationCache: sharedCache, // 🔄 인터페이스로 받음
 	}
 }
 
@@ -50,16 +50,19 @@ func (ac *API2Client) LoadStationCache(routeIDs []string) error {
 		}
 	}
 
+	// 인터페이스 메서드 호출
 	return ac.stationCache.LoadStationCache(routeIDs)
 }
 
 // GetCacheStatistics 캐시 통계 반환 (API2 전용)
 func (ac *API2Client) GetCacheStatistics() (int, int) {
+	// 인터페이스 메서드 호출
 	return ac.stationCache.GetCacheStatistics()
 }
 
 // GetRouteStationCount 특정 노선의 전체 정류소 개수 반환 (API2 전용)
 func (ac *API2Client) GetRouteStationCount(routeID string) int {
+	// 인터페이스 메서드 호출
 	return ac.stationCache.GetRouteStationCount(routeID)
 }
 
@@ -217,7 +220,7 @@ func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLo
 	for _, item := range validItems {
 		busLocation := item.ConvertToBusLocation()
 
-		// 정류소 정보 보강 (routeID 사용)
+		// 정류소 정보 보강 (routeID 사용) - 인터페이스 메서드 호출
 		ac.stationCache.EnrichBusLocationWithStationInfo(&busLocation, routeID)
 
 		// 전체 정류소 개수가 설정되지 않은 경우 설정

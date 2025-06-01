@@ -23,14 +23,14 @@ func main() {
 	cfg := config.LoadConfig()
 	logger := utils.NewLogger()
 
-	logger.Info("버스 트래커 시작 (통합 모드)")
+	logger.Info("🚌 버스 트래커 시작 (V2 캐시 구조 + Redis 2단계 캐시 + 일일 새로고침)")
 	cfg.PrintConfig()
 
-	runUnifiedMode(cfg, logger)
+	runUnifiedModeV2(cfg, logger)
 }
 
-func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
-	logger.Info("통합 모드 시작")
+func runUnifiedModeV2(cfg *config.Config, logger *utils.Logger) {
+	logger.Info("통합 모드 V2 시작")
 
 	// 환경변수 디버깅 정보
 	logger.Infof("설정 확인 - API1 노선수: %d개, API2 노선수: %d개",
@@ -58,8 +58,16 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	currentOperatingDate := busTracker.GetCurrentOperatingDate()
 	logger.Infof("현재 운영일자: %s", currentOperatingDate)
 
-	// API2 우선 통합 캐시 생성
-	unifiedStationCache := cache.NewStationCacheService(cfg, logger, "unified")
+	// 🆕 Redis + L1 2단계 캐시 V2 생성
+	logger.Info("📦 Redis + L1 2단계 캐시 시스템 V2 초기화 중...")
+	logger.Info("   🔧 캐시 구조: RouteID -> StationOrder -> StationData")
+
+	// V2 캐시 생성 - StationCacheInterface로 사용
+	var stationCache cache.StationCacheInterface = cache.NewRedisStationCacheServiceV2(cfg, logger, "unified")
+
+	// Redis 연결 종료를 위해 타입 캐스팅 필요
+	redisV2Cache := stationCache.(*cache.RedisStationCacheServiceV2)
+	defer redisV2Cache.Close() // 프로그램 종료 시 Redis 연결 닫기
 
 	var api1RouteIDs, api2RouteIDs []string
 	if len(cfg.API1Config.RouteIDs) > 0 {
@@ -74,14 +82,21 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	allRouteIDs = utils.Slice.RemoveDuplicateStrings(allRouteIDs)
 	logger.Infof("전체 노선 IDs 통합 (중복 제거 후): %v", allRouteIDs)
 
-	// 정류소 캐시 로드 (백그라운드에서 진행)
+	// 🆕 일일 캐시 새로고침 관리자 V2 생성
+	cacheRefreshManager := cache.NewDailyCacheRefreshManager(cfg, logger, redisV2Cache, allRouteIDs)
+
+	// 🚀 정류소 캐시 로드 (V2 2단계 캐시로 빠른 로딩)
 	if len(allRouteIDs) > 0 {
 		go func() {
-			logger.Info("정류소 캐시 로딩 시작...")
-			if err := unifiedStationCache.LoadStationCache(allRouteIDs); err != nil {
-				logger.Errorf("통합 정류소 캐시 로드 실패: %v", err)
+			logger.Info("📦 V2 2단계 정류소 캐시 로딩 시작...")
+			loadStart := time.Now()
+
+			if err := stationCache.LoadStationCache(allRouteIDs); err != nil {
+				logger.Errorf("정류소 캐시 V2 로드 실패: %v", err)
 			} else {
-				logger.Info("정류소 캐시 로딩 완료")
+				loadDuration := time.Since(loadStart)
+				redisV2Cache.PrintCacheStatus()
+				logger.Infof("✅ 정류소 캐시 V2 로딩 완료 (소요시간: %v)", loadDuration)
 			}
 		}()
 	}
@@ -89,19 +104,20 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	var api1Client *api.API1Client
 	var api2Client *api.API2Client
 
+	// 🔄 인터페이스를 통해 API 클라이언트에 캐시 전달
 	if len(cfg.API1Config.RouteIDs) > 0 {
-		api1Client = api.NewAPI1ClientWithSharedCache(cfg, logger, unifiedStationCache)
-		logger.Infof("API1 클라이언트 생성 완료")
+		api1Client = api.NewAPI1ClientWithSharedCache(cfg, logger, stationCache)
+		logger.Infof("API1 클라이언트 생성 완료 (Redis V2 캐시 사용)")
 	}
 
 	if len(cfg.API2Config.RouteIDs) > 0 {
-		api2Client = api.NewAPI2ClientWithSharedCache(cfg, logger, unifiedStationCache)
-		logger.Infof("API2 클라이언트 생성 완료")
+		api2Client = api.NewAPI2ClientWithSharedCache(cfg, logger, stationCache)
+		logger.Infof("API2 클라이언트 생성 완료 (Redis V2 캐시 사용)")
 	}
 
 	// 중복 체크 기능이 포함된 통합 데이터 매니저 생성
 	dataManager := services.NewUnifiedDataManagerWithDuplicateCheck(
-		logger, busTracker, unifiedStationCache, esService, duplicateChecker, cfg.IndexName)
+		logger, busTracker, stationCache, esService, duplicateChecker, cfg.IndexName)
 
 	orchestrator := services.NewMultiAPIOrchestrator(cfg, logger, api1Client, api2Client, dataManager)
 
@@ -117,7 +133,16 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runDailyOperatingScheduleWorkerWithContext(ctx, cfg, logger, busTracker)
+		runDailyOperatingScheduleWorkerWithContextV2(ctx, cfg, logger, busTracker, redisV2Cache, cacheRefreshManager)
+	}()
+
+	// 🔄 일일 캐시 새로고침 워커 V2 시작
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		cacheRefreshManager.Start()
+		<-ctx.Done()
+		cacheRefreshManager.Stop()
 	}()
 
 	// 오케스트레이터 시작
@@ -128,9 +153,33 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("✅ 오케스트레이터 시작 완료")
 
 	// 시작 완료 메시지
-	logger.Info("🚌 통합 버스 트래커 실행 중")
+	logger.Info("🚌 통합 버스 트래커 실행 중 (V2 캐시 구조 + Redis 2단계 캐시 + 일일 새로고침)")
 	logger.Infof("📅 운영일자: %s", currentOperatingDate)
+	logger.Info("🔄 일일 캐시 새로고침: 매일 운영시작 후 30분 이내")
+	logger.Info("🔧 캐시 구조: RouteID -> StationOrder -> StationData")
 	logger.Info("⏹️  종료하려면 Ctrl+C를 누르세요")
+
+	// 정기적인 캐시 상태 출력 (V2)
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				redisV2Cache.PrintCacheStatus()
+
+				// 새로고침 상태도 함께 출력 (V2)
+				refreshStatus := cacheRefreshManager.GetRefreshStatus()
+				if lastRefresh, ok := refreshStatus["lastRefreshDate"].(string); ok && lastRefresh != "" {
+					logger.Infof("🔄 캐시 새로고침 상태 V2 - 마지막: %s, 진행중: %v",
+						lastRefresh, refreshStatus["isRefreshing"])
+				}
+			}
+		}
+	}()
 
 	// 종료 신호 대기
 	<-sigChan
@@ -166,12 +215,21 @@ func runUnifiedMode(cfg *config.Config, logger *utils.Logger) {
 		logger.Warn("⚠️ 종료 타임아웃 - 강제 종료")
 	}
 
-	logger.Info("✅ 통합 버스 트래커 종료 완료")
+	// 4. Redis 연결 종료 (V2)
+	if err := redisV2Cache.Close(); err != nil {
+		logger.Errorf("Redis V2 연결 종료 실패: %v", err)
+	} else {
+		logger.Info("📦 Redis V2 연결 정상 종료")
+	}
+
+	logger.Info("✅ 통합 버스 트래커 V2 종료 완료")
 }
 
-// runDailyOperatingScheduleWorkerWithContext 컨텍스트를 사용하는 일일 운영시간 관리 워커
-func runDailyOperatingScheduleWorkerWithContext(ctx context.Context, cfg *config.Config, logger *utils.Logger, busTracker *tracker.BusTrackerWithDuplicateCheck) {
-	logger.Info("📅 일일 운영시간 관리 워커 시작")
+// runDailyOperatingScheduleWorkerWithContextV2 일일 운영시간 관리 + V2 캐시 새로고침 모니터링
+func runDailyOperatingScheduleWorkerWithContextV2(ctx context.Context, cfg *config.Config, logger *utils.Logger,
+	busTracker *tracker.BusTrackerWithDuplicateCheck, redisCache *cache.RedisStationCacheServiceV2,
+	refreshManager *cache.DailyCacheRefreshManager) {
+	logger.Info("📅 일일 운영시간 관리 워커 V2 시작")
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -181,7 +239,7 @@ func runDailyOperatingScheduleWorkerWithContext(ctx context.Context, cfg *config
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("📅 일일 운영시간 관리 워커 종료")
+			logger.Info("📅 일일 운영시간 관리 워커 V2 종료")
 			return
 		case <-ticker.C:
 			now := time.Now()
@@ -195,6 +253,7 @@ func runDailyOperatingScheduleWorkerWithContext(ctx context.Context, cfg *config
 
 			lastCheckDate = currentDate
 
+			// 30분마다 상태 요약 + V2 캐시 상태
 			if now.Minute()%30 == 0 && now.Second() < 5 {
 				operatingStatus := "운영시간 외"
 				if cfg.IsOperatingTime(now) {
@@ -204,8 +263,22 @@ func runDailyOperatingScheduleWorkerWithContext(ctx context.Context, cfg *config
 				trackedBuses := busTracker.GetTrackedBusCount()
 				dailyStats := busTracker.GetDailyTripStatistics()
 
-				logger.Infof("📊 상태 요약 [%s] - 운영일자: %s, 추적버스: %d대, 일일차수기록: %d대",
+				logger.Infof("📊 상태 요약 V2 [%s] - 운영일자: %s, 추적버스: %d대, 일일차수기록: %d대",
 					operatingStatus, currentDate, trackedBuses, len(dailyStats))
+
+				// V2 캐시 상태 출력
+				redisCache.PrintCacheStatus()
+
+				// V2 새로고침 상태 출력
+				refreshStatus := refreshManager.GetRefreshStatus()
+				logger.Infof("🔄 캐시 새로고침 V2 - 마지막: %s, 다음예상: %s",
+					refreshStatus["lastRefreshDate"], refreshStatus["nextRefreshTime"])
+
+				// V2 캐시 히트율 정보
+				if cacheStats, ok := refreshStatus["cacheStats"].(map[string]interface{}); ok {
+					logger.Infof("📈 캐시 통계 V2 - 구조: %s, Redis: %t",
+						cacheStats["cache_type"], cacheStats["redis_enabled"])
+				}
 			}
 		}
 	}
