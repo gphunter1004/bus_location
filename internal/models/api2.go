@@ -1,4 +1,4 @@
-// internal/models/api2.go - API2에서 RouteId 추출 개선
+// internal/models/api2.go - 환경변수 RouteId 사용으로 간소화
 package models
 
 import (
@@ -103,7 +103,7 @@ type API2BusLocationItem struct {
 	NodeOrd int    `json:"nodeord"`          // 정류장순서
 	// 노선 정보 - routeNm은 실제로 숫자로 온다
 	RouteNm int    `json:"routenm"`           // 노선번호 (예: 6003) - 숫자로 변경
-	RouteId string `json:"routeid,omitempty"` // 노선ID (예: "GGB233000266") - API2에서는 RouteId 필드 사용
+	RouteId string `json:"routeid,omitempty"` // 노선ID (예: "GGB233000266") - API2에서는 RouteId 필드 사용 (참고용)
 	RouteTp string `json:"routetp,omitempty"` // 노선유형 (예: "직행좌석버스")
 	// 차량 정보
 	VehicleNo string `json:"vehicleno"` // 차량번호 (예: "경기76아4432")
@@ -128,18 +128,10 @@ func (ar *API2Response) GetBusLocationItemList() []API2BusLocationItem {
 	return ar.Response.Body.Items.Item
 }
 
-// ConvertToBusLocation API2BusLocationItem을 BusLocation으로 변환
+// ConvertToBusLocation API2BusLocationItem을 BusLocation으로 변환 (간소화 버전)
 func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
-	// 🔧 RouteNm을 숫자에서 문자열로 변환 (ES 저장용)
+	// RouteNm을 숫자에서 문자열로 변환 (ES 저장용)
 	routeNm := fmt.Sprintf("%d", item.RouteNm)
-
-	// RouteId 추출: RouteId 필드에서 GGB 제거하여 숫자 추출
-	var routeId int64 = 0
-	if item.RouteId != "" && len(item.RouteId) > 3 && strings.HasPrefix(item.RouteId, "GGB") {
-		if id, err := ParseRouteID(item.RouteId[3:]); err == nil {
-			routeId = id
-		}
-	}
 
 	// StationId 생성 - NodeId에서 GGB 제거한 값 사용
 	var stationId int64 = 0
@@ -156,8 +148,8 @@ func (item *API2BusLocationItem) ConvertToBusLocation() BusLocation {
 	}
 
 	return BusLocation{
-		// 🔧 RouteId는 항상 채워짐 (추출된 숫자 ID)
-		RouteId:    routeId,        // 추출된 숫자형 노선ID
+		// 🔧 RouteId는 클라이언트에서 환경변수로 설정됨 (초기값 0)
+		RouteId:    0,              // API2 클라이언트에서 환경변수 값으로 설정
 		RouteNm:    routeNm,        // API2의 실제 노선번호 (문자열)
 		PlateNo:    item.VehicleNo, // 차량번호
 		StationId:  stationId,      // NodeId에서 GGB 제거한 값

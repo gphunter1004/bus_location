@@ -1,4 +1,4 @@
-// internal/services/api/api1_client.go - 인터페이스 사용으로 수정
+// internal/services/api/api1_client.go - 환경변수 RouteId 우선 사용
 package api
 
 import (
@@ -91,7 +91,7 @@ func (ac *API1Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 	return ac.parseResponse(body, routeID)
 }
 
-// parseResponse API1 응답 파싱
+// parseResponse API1 응답 파싱 (환경변수 RouteId 우선 사용)
 func (ac *API1Client) parseResponse(body []byte, routeID string) ([]models.BusLocation, error) {
 	var apiResp models.API1Response
 	if err := json.Unmarshal(body, &apiResp); err != nil {
@@ -105,11 +105,28 @@ func (ac *API1Client) parseResponse(body []byte, routeID string) ([]models.BusLo
 
 	busLocations := apiResp.GetBusLocationList()
 
+	// 환경변수 RouteId 우선 사용으로 RouteId 보장
+	envRouteId, err := models.ParseRouteID(routeID)
+	if err != nil {
+		return nil, fmt.Errorf("환경변수 routeID 파싱 실패 (%s): %v", routeID, err)
+	}
+
+	ac.logger.Debugf("API1 환경변수 RouteId 설정 - 요청 routeID: %s -> RouteId: %d", routeID, envRouteId)
+
 	// 응답에 routeId 정보 추가 및 정류소 정보 보강
 	for i := range busLocations {
+		// 1순위: API 응답의 RouteId (있는 경우)
 		if busLocations[i].RouteId == 0 {
-			if routeIdInt, err := models.ParseRouteID(routeID); err == nil {
-				busLocations[i].RouteId = routeIdInt
+			// 2순위: 환경변수에서 추출한 RouteId (가장 신뢰도 높음)
+			busLocations[i].RouteId = envRouteId
+			ac.logger.Debugf("RouteId 환경변수로 설정 - 차량: %s, RouteId: %d",
+				busLocations[i].PlateNo, envRouteId)
+		} else {
+			// API 응답에 RouteId가 있는 경우 검증
+			if busLocations[i].RouteId != envRouteId {
+				ac.logger.Warnf("RouteId 불일치 - 차량: %s, API응답: %d, 환경변수: %d (환경변수 사용)",
+					busLocations[i].PlateNo, busLocations[i].RouteId, envRouteId)
+				busLocations[i].RouteId = envRouteId // 환경변수 값으로 강제 설정
 			}
 		}
 

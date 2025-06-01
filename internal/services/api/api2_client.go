@@ -128,7 +128,7 @@ func (ac *API2Client) FetchBusLocationByRoute(routeID string) ([]models.BusLocat
 	return ac.parseResponse(body, routeID)
 }
 
-// parseResponse API2 응답 파싱 (검증 강화 및 에러 처리 개선)
+// parseResponse API2 응답 파싱 (환경변수 RouteId 우선 사용)
 func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLocation, error) {
 	// 응답이 비어있는 경우 처리
 	if len(body) == 0 {
@@ -182,6 +182,21 @@ func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLo
 	busItems := apiResp.GetBusLocationItemList()
 	ac.logger.Infof("API2 파싱 완료 (routeId: %s): %d개 버스 아이템", routeID, len(busItems))
 
+	// 환경변수에서 RouteId 추출 (API2는 항상 이 방식 사용)
+	var envRouteId int64 = 0
+	if strings.HasPrefix(routeID, "GGB") && len(routeID) > 3 {
+		if extractedId, err := models.ParseRouteID(routeID[3:]); err == nil {
+			envRouteId = extractedId
+			ac.logger.Debugf("API2 환경변수 RouteId 설정 - 요청 routeID: %s -> RouteId: %d", routeID, envRouteId)
+		} else {
+			ac.logger.Errorf("API2 환경변수 routeID 파싱 실패 (%s): %v", routeID, err)
+			return nil, fmt.Errorf("환경변수 routeID 파싱 실패 (%s): %v", routeID, err)
+		}
+	} else {
+		ac.logger.Errorf("API2 routeID 형식 오류: %s (GGB로 시작해야 함)", routeID)
+		return nil, fmt.Errorf("API2 routeID 형식 오류: %s", routeID)
+	}
+
 	// 데이터 품질 검증
 	validItems := []models.API2BusLocationItem{}
 
@@ -219,6 +234,9 @@ func (ac *API2Client) parseResponse(body []byte, routeID string) ([]models.BusLo
 	var busLocations []models.BusLocation
 	for _, item := range validItems {
 		busLocation := item.ConvertToBusLocation()
+
+		// 환경변수 RouteId 강제 설정 (API2는 항상 환경변수 사용)
+		busLocation.RouteId = envRouteId
 
 		// 정류소 정보 보강 (routeID 사용) - 인터페이스 메서드 호출
 		ac.stationCache.EnrichBusLocationWithStationInfo(&busLocation, routeID)
