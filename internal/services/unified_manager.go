@@ -2,6 +2,8 @@
 package services
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,44 +140,60 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI1Data(busLocations []models.Bu
 	processedCount := 0
 	duplicateCount := 0
 	redisChangedCount := 0
+	redisNoChangeCount := 0
+
+	var processedVehicles []string
+	var changedVehicles []string
 
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
 		if plateNo == "" || bus.RouteId == 0 {
-			continue // 유효하지 않은 데이터는 조용히 건너뛰기
+			continue
 		}
 
-		// 첫 실행 시 중복 체크
+		processedVehicles = append(processedVehicles, plateNo)
+
 		if udm.isDuplicateDataForFirstRun(plateNo, bus) {
 			duplicateCount++
 			udm.redisBusManager.UpdateBusData(bus, []string{"api1"})
 			continue
 		}
 
-		// Redis 업데이트
 		_, hasLocationChanged, err := udm.redisBusManager.UpdateBusData(bus, []string{"api1"})
 		if err != nil {
-			continue // 오류는 조용히 처리
+			continue
 		}
 
 		processedCount++
 
 		if hasLocationChanged {
 			redisChangedCount++
+			changedVehicles = append(changedVehicles, plateNo)
 			if udm.shouldSendToES(plateNo, bus) {
 				esReadyBuses = append(esReadyBuses, bus)
 			}
+		} else {
+			redisNoChangeCount++
 		}
 	}
 
-	// ES 배치 전송
 	if len(esReadyBuses) > 0 {
 		udm.sendBatchToElasticsearch(esReadyBuses, "API1")
 	}
 
-	// 🎯 핵심 로그만: 처리 결과 요약
-	udm.logger.Infof("API1 처리완료: 수신=%d, 처리=%d, 중복=%d, 변경=%d, ES전송=%d",
-		len(busLocations), processedCount, duplicateCount, redisChangedCount, len(esReadyBuses))
+	// 🆕 개선된 로그
+	if redisChangedCount == 0 && len(esReadyBuses) == 0 && redisNoChangeCount > 0 {
+		udm.logger.Infof("API1 처리완료: 수신=%d, 처리=%d, 위치변경=%d, ES전송=%d (동일위치: %s)",
+			len(busLocations), processedCount, redisChangedCount, len(esReadyBuses),
+			udm.formatVehicleList(processedVehicles))
+	} else if len(changedVehicles) > 0 {
+		udm.logger.Infof("API1 처리완료: 수신=%d, 처리=%d, 위치변경=%d(차량: %s), ES전송=%d",
+			len(busLocations), processedCount, redisChangedCount,
+			udm.formatVehicleList(changedVehicles), len(esReadyBuses))
+	} else {
+		udm.logger.Infof("API1 처리완료: 수신=%d, 처리=%d, 중복=%d, 변경=%d, ES전송=%d",
+			len(busLocations), processedCount, duplicateCount, redisChangedCount, len(esReadyBuses))
+	}
 }
 
 // UpdateAPI2Data API2 데이터 업데이트 처리
@@ -188,12 +206,19 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI2Data(busLocations []models.Bu
 	processedCount := 0
 	duplicateCount := 0
 	redisChangedCount := 0
+	redisNoChangeCount := 0 // 🆕 위치 변경 없는 차량 수
+
+	// 🆕 차량 목록 수집 (로그용)
+	var processedVehicles []string
+	var changedVehicles []string
 
 	for _, bus := range busLocations {
 		plateNo := bus.PlateNo
 		if plateNo == "" || bus.RouteId == 0 {
-			continue // 유효하지 않은 데이터는 조용히 건너뛰기
+			continue
 		}
+
+		processedVehicles = append(processedVehicles, plateNo)
 
 		// 첫 실행 시 중복 체크
 		if udm.isDuplicateDataForFirstRun(plateNo, bus) {
@@ -205,16 +230,19 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI2Data(busLocations []models.Bu
 		// Redis 업데이트
 		_, hasLocationChanged, err := udm.redisBusManager.UpdateBusData(bus, []string{"api2"})
 		if err != nil {
-			continue // 오류는 조용히 처리
+			continue
 		}
 
 		processedCount++
 
 		if hasLocationChanged {
 			redisChangedCount++
+			changedVehicles = append(changedVehicles, plateNo)
 			if udm.shouldSendToES(plateNo, bus) {
 				esReadyBuses = append(esReadyBuses, bus)
 			}
+		} else {
+			redisNoChangeCount++
 		}
 	}
 
@@ -223,9 +251,19 @@ func (udm *SimplifiedUnifiedDataManager) UpdateAPI2Data(busLocations []models.Bu
 		udm.sendBatchToElasticsearch(esReadyBuses, "API2")
 	}
 
-	// 🎯 핵심 로그만: 처리 결과 요약
-	udm.logger.Infof("API2 처리완료: 수신=%d, 처리=%d, 중복=%d, 변경=%d, ES전송=%d",
-		len(busLocations), processedCount, duplicateCount, redisChangedCount, len(esReadyBuses))
+	// 🆕 개선된 로그 - 상황 설명 추가
+	if redisChangedCount == 0 && len(esReadyBuses) == 0 && redisNoChangeCount > 0 {
+		udm.logger.Infof("API2 처리완료: 수신=%d, 처리=%d, 위치변경=%d, ES전송=%d (동일위치: %s)",
+			len(busLocations), processedCount, redisChangedCount, len(esReadyBuses),
+			udm.formatVehicleList(processedVehicles))
+	} else if len(changedVehicles) > 0 {
+		udm.logger.Infof("API2 처리완료: 수신=%d, 처리=%d, 위치변경=%d(차량: %s), ES전송=%d",
+			len(busLocations), processedCount, redisChangedCount,
+			udm.formatVehicleList(changedVehicles), len(esReadyBuses))
+	} else {
+		udm.logger.Infof("API2 처리완료: 수신=%d, 처리=%d, 중복=%d, 변경=%d, ES전송=%d",
+			len(busLocations), processedCount, duplicateCount, redisChangedCount, len(esReadyBuses))
+	}
 }
 
 // sendBatchToElasticsearch ES 배치 전송
@@ -310,11 +348,16 @@ func (udm *SimplifiedUnifiedDataManager) syncRedisToES() {
 	}
 
 	if len(changedBuses) == 0 {
-		return // 변경 없으면 조용히 리턴
+		return
 	}
 
-	// 🎯 핵심 로그만: Redis 동기화 발견
-	udm.logger.Infof("Redis 동기화: %d건 발견", len(changedBuses))
+	// 🆕 차량 목록 수집
+	var vehicles []string
+	for _, bus := range changedBuses {
+		vehicles = append(vehicles, bus.PlateNo)
+	}
+
+	udm.logger.Infof("Redis 동기화: %d건 발견 (차량: %s)", len(changedBuses), udm.formatVehicleList(vehicles))
 
 	// 배치 크기로 나누어 전송
 	for i := 0; i < len(changedBuses); i += udm.batchSize {
@@ -394,6 +437,17 @@ func (udm *SimplifiedUnifiedDataManager) isLocationChanged(plateNo string, bus m
 // GetActiveBusesByRoute 노선별 활성 버스 조회
 func (udm *SimplifiedUnifiedDataManager) GetActiveBusesByRoute(routeId int64) ([]string, error) {
 	return udm.redisBusManager.GetActiveBusesByRoute(routeId)
+}
+
+// 🆕 차량 목록 포맷팅 헬퍼 함수
+func (udm *SimplifiedUnifiedDataManager) formatVehicleList(vehicles []string) string {
+	if len(vehicles) == 0 {
+		return "없음"
+	}
+	if len(vehicles) <= 3 {
+		return strings.Join(vehicles, ",")
+	}
+	return fmt.Sprintf("%s 외 %d대", strings.Join(vehicles[:2], ","), len(vehicles)-2)
 }
 
 // 인터페이스 구현 확인
