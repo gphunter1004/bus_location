@@ -1,4 +1,4 @@
-// internal/services/orchestrator.go - Redis 중심 단순화 버전
+// internal/services/orchestrator.go - 최초 로딩 완료 후 시작 버전
 package services
 
 import (
@@ -7,9 +7,20 @@ import (
 	"time"
 
 	"bus-tracker/config"
+	"bus-tracker/internal/models"
 	"bus-tracker/internal/services/api"
 	"bus-tracker/internal/utils"
 )
+
+// UnifiedDataManagerInterface 정의
+type UnifiedDataManagerInterface interface {
+	UpdateAPI1Data(busLocations []models.BusLocation)
+	UpdateAPI2Data(busLocations []models.BusLocation)
+	CleanupOldData(maxAge time.Duration) int
+	StartPeriodicESSync()
+	StopPeriodicESSync()
+	IsInitialLoadingDone() bool // 🔧 최초 로딩 완료 여부 확인 메서드 추가
+}
 
 // SimplifiedMultiAPIOrchestrator Redis 중심 단순화된 다중 API 오케스트레이터
 type SimplifiedMultiAPIOrchestrator struct {
@@ -46,7 +57,7 @@ func NewSimplifiedMultiAPIOrchestrator(cfg *config.Config, logger *utils.Logger,
 	}
 }
 
-// Start 오케스트레이터 시작 (단순화)
+// Start 오케스트레이터 시작 (최초 로딩 완료 확인 후)
 func (sao *SimplifiedMultiAPIOrchestrator) Start() error {
 	sao.mutex.Lock()
 	defer sao.mutex.Unlock()
@@ -54,6 +65,13 @@ func (sao *SimplifiedMultiAPIOrchestrator) Start() error {
 	if sao.isRunning {
 		return nil
 	}
+
+	// 🔧 최초 로딩 완료 대기
+	sao.logger.Info("⏳ 최초 데이터 로딩 완료 대기 중...")
+	for !sao.dataManager.IsInitialLoadingDone() {
+		time.Sleep(500 * time.Millisecond)
+	}
+	sao.logger.Info("✅ 최초 데이터 로딩 완료 확인 - 정상 운영 시작")
 
 	// Redis 기반 주기적 ES 동기화 시작
 	sao.dataManager.StartPeriodicESSync()
@@ -75,20 +93,23 @@ func (sao *SimplifiedMultiAPIOrchestrator) Start() error {
 	go sao.runCleanupWorker()
 
 	sao.isRunning = true
-	sao.logger.Info("✅ 단순화된 멀티 API 오케스트레이터 시작 완료")
+	sao.logger.Info("✅ 오케스트레이터 정상 운영 시작 완료")
 
 	return nil
 }
 
-// runAPI1Worker API1 워커 실행 (단순화)
+// runAPI1Worker API1 워커 실행 (정상 운영)
 func (sao *SimplifiedMultiAPIOrchestrator) runAPI1Worker() {
 	defer sao.wg.Done()
 
 	ticker := time.NewTicker(sao.config.API1Config.Interval)
 	defer ticker.Stop()
 
-	sao.logger.Infof("🔄 API1 워커 시작 - 주기: %v, 노선: %d개",
+	sao.logger.Infof("🔄 API1 정상 운영 워커 시작 - 주기: %v, 노선: %d개",
 		sao.config.API1Config.Interval, len(sao.config.API1Config.RouteIDs))
+
+	// 🔧 첫 번째 호출 전 약간의 지연 (최초 로딩과 겹치지 않도록)
+	time.Sleep(2 * time.Second)
 
 	// 첫 번째 즉시 실행
 	if sao.config.IsOperatingTime(time.Now()) {
@@ -110,18 +131,18 @@ func (sao *SimplifiedMultiAPIOrchestrator) runAPI1Worker() {
 	}
 }
 
-// runAPI2Worker API2 워커 실행 (단순화)
+// runAPI2Worker API2 워커 실행 (정상 운영)
 func (sao *SimplifiedMultiAPIOrchestrator) runAPI2Worker() {
 	defer sao.wg.Done()
 
 	ticker := time.NewTicker(sao.config.API2Config.Interval)
 	defer ticker.Stop()
 
-	sao.logger.Infof("🔄 API2 워커 시작 - 주기: %v, 노선: %d개",
+	sao.logger.Infof("🔄 API2 정상 운영 워커 시작 - 주기: %v, 노선: %d개",
 		sao.config.API2Config.Interval, len(sao.config.API2Config.RouteIDs))
 
-	// API1과 시간차를 두어 시작
-	time.Sleep(3 * time.Second)
+	// 🔧 API1과 시간차를 두어 시작 (최초 로딩과 겹치지 않도록)
+	time.Sleep(5 * time.Second)
 
 	// 첫 번째 즉시 실행
 	if sao.config.IsOperatingTime(time.Now()) {
@@ -143,7 +164,7 @@ func (sao *SimplifiedMultiAPIOrchestrator) runAPI2Worker() {
 	}
 }
 
-// runCleanupWorker 정리 워커 (단순화)
+// runCleanupWorker 정리 워커 (정상 운영)
 func (sao *SimplifiedMultiAPIOrchestrator) runCleanupWorker() {
 	defer sao.wg.Done()
 
@@ -163,9 +184,15 @@ func (sao *SimplifiedMultiAPIOrchestrator) runCleanupWorker() {
 	}
 }
 
-// processAPI1Call API1 호출 처리 (단순화)
+// processAPI1Call API1 호출 처리 (정상 운영)
 func (sao *SimplifiedMultiAPIOrchestrator) processAPI1Call() {
 	if sao.api1Client == nil {
+		return
+	}
+
+	// 🔧 최초 로딩 중에는 건너뛰기
+	if !sao.dataManager.IsInitialLoadingDone() {
+		sao.logger.Debug("최초 로딩 중 - API1 호출 건너뛰기")
 		return
 	}
 
@@ -180,13 +207,19 @@ func (sao *SimplifiedMultiAPIOrchestrator) processAPI1Call() {
 
 	sao.logger.Infof("API1 호출 완료 - %d건 수신 (소요시간: %v)", len(busLocations), duration)
 
-	// 단순화된 데이터 매니저로 전달
+	// 정상 운영 모드로 데이터 매니저에 전달
 	sao.dataManager.UpdateAPI1Data(busLocations)
 }
 
-// processAPI2Call API2 호출 처리 (단순화)
+// processAPI2Call API2 호출 처리 (정상 운영)
 func (sao *SimplifiedMultiAPIOrchestrator) processAPI2Call() {
 	if sao.api2Client == nil {
+		return
+	}
+
+	// 🔧 최초 로딩 중에는 건너뛰기
+	if !sao.dataManager.IsInitialLoadingDone() {
+		sao.logger.Debug("최초 로딩 중 - API2 호출 건너뛰기")
 		return
 	}
 
@@ -201,11 +234,11 @@ func (sao *SimplifiedMultiAPIOrchestrator) processAPI2Call() {
 
 	sao.logger.Infof("API2 호출 완료 - %d건 수신 (소요시간: %v)", len(busLocations), duration)
 
-	// 단순화된 데이터 매니저로 전달
+	// 정상 운영 모드로 데이터 매니저에 전달
 	sao.dataManager.UpdateAPI2Data(busLocations)
 }
 
-// processCleanup 정리 작업 (단순화)
+// processCleanup 정리 작업 (정상 운영)
 func (sao *SimplifiedMultiAPIOrchestrator) processCleanup() {
 	cleanedCount := sao.dataManager.CleanupOldData(sao.config.DataRetentionPeriod)
 
@@ -216,7 +249,7 @@ func (sao *SimplifiedMultiAPIOrchestrator) processCleanup() {
 	}
 }
 
-// Stop 오케스트레이터 정지 (단순화)
+// Stop 오케스트레이터 정지
 func (sao *SimplifiedMultiAPIOrchestrator) Stop() {
 	sao.mutex.Lock()
 	defer sao.mutex.Unlock()
@@ -225,7 +258,7 @@ func (sao *SimplifiedMultiAPIOrchestrator) Stop() {
 		return
 	}
 
-	sao.logger.Info("🔄 단순화된 멀티 API 오케스트레이터 정지 중...")
+	sao.logger.Info("🔄 오케스트레이터 정지 중...")
 
 	// Redis 기반 주기적 ES 동기화 중지
 	sao.dataManager.StopPeriodicESSync()
@@ -237,7 +270,7 @@ func (sao *SimplifiedMultiAPIOrchestrator) Stop() {
 	sao.wg.Wait()
 
 	sao.isRunning = false
-	sao.logger.Info("✅ 단순화된 멀티 API 오케스트레이터 정지 완료")
+	sao.logger.Info("✅ 오케스트레이터 정지 완료")
 }
 
 // IsRunning 실행 상태 확인
@@ -247,16 +280,17 @@ func (sao *SimplifiedMultiAPIOrchestrator) IsRunning() bool {
 	return sao.isRunning
 }
 
-// GetDetailedStatistics 상세 통계 정보 반환 (단순화)
+// GetDetailedStatistics 상세 통계 정보 반환
 func (sao *SimplifiedMultiAPIOrchestrator) GetDetailedStatistics() map[string]interface{} {
 	stats := make(map[string]interface{})
 
-	// 기본 정보만
+	// 기본 정보
 	stats["is_running"] = sao.IsRunning()
 	stats["api1_enabled"] = sao.api1Client != nil && len(sao.config.API1Config.RouteIDs) > 0
 	stats["api2_enabled"] = sao.api2Client != nil && len(sao.config.API2Config.RouteIDs) > 0
 	stats["operating_schedule"] = sao.config.GetOperatingScheduleString()
 	stats["is_operating_time"] = sao.config.IsOperatingTime(time.Now())
+	stats["initial_loading_done"] = sao.dataManager.IsInitialLoadingDone() // 🔧 최초 로딩 상태 추가
 
 	return stats
 }

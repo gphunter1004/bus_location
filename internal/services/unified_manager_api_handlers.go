@@ -1,4 +1,4 @@
-// internal/services/unified_manager_api_handlers.go - 타입명 수정
+// internal/services/unified_manager_api_handlers.go - 타입 수정
 package services
 
 import (
