@@ -1,4 +1,4 @@
-// runSimplifiedManagementWorker 단순화된 관// main.go - Redis 중심 단순화 버전
+// main.go - BusTracker 포함 수정 버전
 package main
 
 import (
@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,14 +25,14 @@ func main() {
 	cfg := config.LoadConfig()
 	logger := utils.NewLogger()
 
-	logger.Info("🚌 Redis 중심 단순화 버스 트래커 시작")
+	logger.Info("🚌 Redis 중심 + BusTracker 포함 버스 트래커 시작")
 	cfg.PrintConfig()
 
 	runSimplifiedMode(cfg, logger)
 }
 
 func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
-	logger.Info("📦 Redis 중심 단순화 모드 시작")
+	logger.Info("📦 Redis 중심 + BusTracker 포함 모드 시작")
 
 	// 환경변수 디버깅 정보
 	logger.Infof("설정 확인 - API1 노선수: %d개, API2 노선수: %d개",
@@ -97,9 +98,12 @@ func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
 		logger.Info("API2 클라이언트 생성 완료")
 	}
 
-	// 단순화된 통합 데이터 매니저 생성
+	// 🔧 BusTracker 포함 통합 데이터 매니저 생성
 	dataManager := services.NewSimplifiedUnifiedDataManager(
 		logger, stationCache, esService, redisBusManager, duplicateChecker, cfg.IndexName)
+
+	// 🔧 BusTracker 초기화
+	dataManager.InitializeBusTracker(cfg)
 
 	// 오케스트레이터 생성
 	orchestrator := services.NewMultiAPIOrchestrator(cfg, logger, api1Client, api2Client, dataManager)
@@ -108,15 +112,11 @@ func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
-	// 신호 처리 설정
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// 단순화된 관리 워커 시작
+	// 관리 워커 시작 (BusTracker 통계 포함)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runSimplifiedManagementWorker(ctx, cfg, logger, redisBusManager, redisV2Cache)
+		runManagementWorkerWithTracker(ctx, cfg, logger, dataManager, redisBusManager, redisV2Cache)
 	}()
 
 	// 오케스트레이터 시작
@@ -127,11 +127,11 @@ func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("✅ 오케스트레이터 시작 완료")
 
 	// 시작 완료 메시지
-	logger.Info("🚌 Redis 중심 단순화 버스 트래커 실행 중")
-	logger.Info("🔄 데이터 플로우: API → Redis → ES")
+	logger.Info("🚌 Redis 중심 + BusTracker 포함 버스 트래커 실행 중")
+	logger.Info("🔄 데이터 플로우: API → BusTracker → Redis → ES")
 	logger.Info("⏹️  종료하려면 Ctrl+C를 누르세요")
 
-	// 정기적인 상태 출력 (단순화)
+	// 정기적인 상태 출력 (BusTracker 통계 포함)
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
@@ -141,12 +141,14 @@ func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				printSimplifiedStatus(logger, dataManager, redisV2Cache, orchestrator)
+				printStatusWithTracker(logger, dataManager, redisV2Cache, orchestrator)
 			}
 		}
 	}()
 
 	// 종료 신호 대기
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
 	logger.Info("📶 종료 신호 수신 - 우아한 종료 시작")
@@ -191,14 +193,15 @@ func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
 		logger.Info("📦 Redis 버스 데이터 매니저 연결 정상 종료")
 	}
 
-	logger.Info("✅ Redis 중심 단순화 버스 트래커 종료 완료")
+	logger.Info("✅ Redis 중심 + BusTracker 포함 버스 트래커 종료 완료")
 }
 
-// runSimplifiedManagementWorker 단순화된 관리 워커
-func runSimplifiedManagementWorker(ctx context.Context, cfg *config.Config, logger *utils.Logger,
-	redisBusManager *redis.RedisBusDataManager, redisCache *cache.RedisStationCacheServiceV2) {
+// runManagementWorkerWithTracker BusTracker 포함 관리 워커
+func runManagementWorkerWithTracker(ctx context.Context, cfg *config.Config, logger *utils.Logger,
+	dataManager *services.SimplifiedUnifiedDataManager, redisBusManager *redis.RedisBusDataManager,
+	redisCache *cache.RedisStationCacheServiceV2) {
 
-	logger.Info("📅 단순화된 관리 워커 시작")
+	logger.Info("📅 BusTracker 포함 관리 워커 시작")
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -208,7 +211,7 @@ func runSimplifiedManagementWorker(ctx context.Context, cfg *config.Config, logg
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("📅 단순화된 관리 워커 종료")
+			logger.Info("📅 BusTracker 포함 관리 워커 종료")
 			return
 		case <-ticker.C:
 			now := time.Now()
@@ -217,19 +220,26 @@ func runSimplifiedManagementWorker(ctx context.Context, cfg *config.Config, logg
 			if lastCheckDate != "" && lastCheckDate != currentDate {
 				logger.Infof("📅 운영일자 변경 감지: %s -> %s", lastCheckDate, currentDate)
 
-				// 새로운 운영일 시작 시 Redis 정리
+				// 🔧 새로운 운영일 시작 시 정리 작업
+				// 1. Redis 정리
 				cleanedCount, err := redisBusManager.CleanupInactiveBuses(24 * time.Hour)
 				if err != nil {
 					logger.Errorf("일일 Redis 정리 실패: %v", err)
 				} else if cleanedCount > 0 {
 					logger.Infof("🧹 일일 Redis 정리 완료 - 제거된 버스: %d대", cleanedCount)
 				}
+
+				// 2. BusTracker 일일 리셋
+				trackerStats := dataManager.GetBusTrackerStatistics()
+				if trackerEnabled, ok := trackerStats["tracker_enabled"].(bool); ok && trackerEnabled {
+					logger.Infof("🔄 BusTracker 일일 리셋 - 이전 운영일 통계: %v", trackerStats["trip_statistics"])
+				}
 			}
 
 			lastCheckDate = currentDate
 
-			// 30분마다 상태 요약 (단순화)
-			if now.Minute()%30 == 0 && now.Second() < 5 {
+			// 🔧 5분마다 상세 상태 요약
+			if now.Minute()%5 == 0 && now.Second() < 10 {
 				operatingStatus := "운영시간 외"
 				if cfg.IsOperatingTime(now) {
 					operatingStatus = "운영시간 내"
@@ -239,24 +249,78 @@ func runSimplifiedManagementWorker(ctx context.Context, cfg *config.Config, logg
 
 				// 정류소 캐시 상태
 				routes, stations := redisCache.GetCacheStatistics()
-				logger.Infof("📦 정류소 캐시 현황 - %d노선/%d정류소", routes, stations)
+				logger.Infof("📦 정류소 캐시: %d노선/%d정류소", routes, stations)
+
+				// BusTracker 상태
+				trackerStats := dataManager.GetBusTrackerStatistics()
+				if trackerEnabled, ok := trackerStats["tracker_enabled"].(bool); ok && trackerEnabled {
+					trackedBuses := trackerStats["tracked_buses"]
+					dailyTripCount := trackerStats["daily_trip_count"]
+					logger.Infof("🚌 BusTracker: 추적중 %v대, 일일운행 %v건", trackedBuses, dailyTripCount)
+				}
+
+				// Redis 버스 데이터 통계
+				if redisStats, err := redisBusManager.GetBusStatistics(); err == nil {
+					totalBuses := redisStats["total_buses"]
+					activeBuses := redisStats["active_buses"]
+					logger.Infof("💾 Redis 버스데이터: 전체 %v대, 활성 %v대", totalBuses, activeBuses)
+				}
+			}
+
+			// 🔧 30분마다 통합 데이터 정리
+			if now.Minute()%30 == 0 && now.Second() < 10 {
+				cleanedCount := dataManager.CleanupOldData(cfg.DataRetentionPeriod)
+				if cleanedCount > 0 {
+					logger.Infof("🧹 정기 데이터 정리: %d대 제거", cleanedCount)
+				}
 			}
 		}
 	}
 }
 
-// printSimplifiedStatus 단순화된 상태 출력
-func printSimplifiedStatus(logger *utils.Logger, dataManager *services.SimplifiedUnifiedDataManager,
+// printStatusWithTracker BusTracker 포함 상태 출력
+func printStatusWithTracker(logger *utils.Logger, dataManager *services.SimplifiedUnifiedDataManager,
 	redisCache *cache.RedisStationCacheServiceV2, orchestrator *services.MultiAPIOrchestrator) {
+
+	logger.Info("📊 === 정기 상태 보고 ===")
 
 	// 정류소 캐시 상태
 	routes, stations := redisCache.GetCacheStatistics()
 	logger.Infof("📦 정류소 캐시 현황 - %d노선/%d정류소", routes, stations)
 
+	// BusTracker 상태
+	trackerStats := dataManager.GetBusTrackerStatistics()
+	if trackerEnabled, ok := trackerStats["tracker_enabled"].(bool); ok && trackerEnabled {
+		trackedBuses := trackerStats["tracked_buses"]
+		dailyTripCount := trackerStats["daily_trip_count"]
+		currentDate := trackerStats["current_operating_date"]
+		logger.Infof("🚌 BusTracker 현황 - 추적중: %v대, 일일운행: %v건, 운영일: %v",
+			trackedBuses, dailyTripCount, currentDate)
+
+		// 상위 5개 차량의 운행 차수 출력
+		if tripStats, ok := trackerStats["trip_statistics"].(map[string]int); ok && len(tripStats) > 0 {
+			count := 0
+			var topVehicles []string
+			for plateNo, tripCount := range tripStats {
+				if count < 5 {
+					topVehicles = append(topVehicles, fmt.Sprintf("%s(%d차수)", plateNo, tripCount))
+				}
+				count++
+			}
+			if len(topVehicles) > 0 {
+				logger.Infof("   🏆 운행 현황: %s", strings.Join(topVehicles, ", "))
+			}
+		}
+	} else {
+		logger.Errorf("❌ BusTracker 비활성화: %v", trackerStats["error"])
+	}
+
 	// 오케스트레이터 기본 상태
 	orchStats := orchestrator.GetDetailedStatistics()
-	logger.Infof("🎯 오케스트레이터 상태 - 실행중: %v, API1: %v, API2: %v",
+	logger.Infof("🎯 오케스트레이터 - 실행중: %v, API1: %v, API2: %v",
 		orchStats["is_running"], orchStats["api1_enabled"], orchStats["api2_enabled"])
+
+	logger.Info("📊 === 상태 보고 완료 ===")
 }
 
 // connectToElasticsearchWithRetry Elasticsearch 연결 재시도
