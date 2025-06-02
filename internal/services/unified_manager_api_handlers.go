@@ -1,17 +1,12 @@
-// internal/services/unified_manager_api_handlers.go - 단순화 버전
+// internal/services/unified_manager_api_handlers.go - 타입명 수정
 package services
 
 import (
 	"bus-tracker/internal/models"
 )
 
-// 단순화된 Redis 중심 구조에서는 API 핸들러가 통합 매니저의 메인 메서드로 통합됨
-// UpdateAPI1Data와 UpdateAPI2Data가 이미 unified_manager.go에 구현되어 있음
-
-// 추가 헬퍼 함수들
-
 // validateBusData 버스 데이터 유효성 검증
-func (udm *SimplifiedUnifiedDataManager) validateBusData(bus models.BusLocation, source string) bool {
+func (udm *UnifiedDataManager) validateBusData(bus models.BusLocation, source string) bool {
 	// 필수 필드 검증
 	if bus.PlateNo == "" {
 		udm.logger.Warnf("%s 데이터 검증 실패: 차량번호 없음", source)
@@ -42,7 +37,7 @@ func (udm *SimplifiedUnifiedDataManager) validateBusData(bus models.BusLocation,
 }
 
 // enrichBusDataFromCache 캐시에서 버스 데이터 보강
-func (udm *SimplifiedUnifiedDataManager) enrichBusDataFromCache(bus *models.BusLocation, source string) {
+func (udm *UnifiedDataManager) enrichBusDataFromCache(bus *models.BusLocation, source string) {
 	if udm.stationCache == nil {
 		return
 	}

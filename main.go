@@ -1,4 +1,4 @@
-// main.go - BusTracker 포함 수정 버전
+// main.go - 타입명 수정 버전
 package main
 
 import (
@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -98,8 +97,8 @@ func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
 		logger.Info("API2 클라이언트 생성 완료")
 	}
 
-	// 🔧 BusTracker 포함 통합 데이터 매니저 생성
-	dataManager := services.NewSimplifiedUnifiedDataManager(
+	// 🔧 통합 데이터 매니저 생성 (타입명 변경)
+	dataManager := services.NewUnifiedDataManager(
 		logger, stationCache, esService, redisBusManager, duplicateChecker, cfg.IndexName)
 
 	// 🔧 BusTracker 초기화
@@ -196,9 +195,9 @@ func runSimplifiedMode(cfg *config.Config, logger *utils.Logger) {
 	logger.Info("✅ Redis 중심 + BusTracker 포함 버스 트래커 종료 완료")
 }
 
-// runManagementWorkerWithTracker BusTracker 포함 관리 워커
+// runManagementWorkerWithTracker BusTracker 포함 관리 워커 (타입명 변경)
 func runManagementWorkerWithTracker(ctx context.Context, cfg *config.Config, logger *utils.Logger,
-	dataManager *services.SimplifiedUnifiedDataManager, redisBusManager *redis.RedisBusDataManager,
+	dataManager *services.UnifiedDataManager, redisBusManager *redis.RedisBusDataManager,
 	redisCache *cache.RedisStationCacheServiceV2) {
 
 	logger.Info("📅 BusTracker 포함 관리 워커 시작")
@@ -228,12 +227,6 @@ func runManagementWorkerWithTracker(ctx context.Context, cfg *config.Config, log
 				} else if cleanedCount > 0 {
 					logger.Infof("🧹 일일 Redis 정리 완료 - 제거된 버스: %d대", cleanedCount)
 				}
-
-				// 2. BusTracker 일일 리셋
-				trackerStats := dataManager.GetBusTrackerStatistics()
-				if trackerEnabled, ok := trackerStats["tracker_enabled"].(bool); ok && trackerEnabled {
-					logger.Infof("🔄 BusTracker 일일 리셋 - 이전 운영일 통계: %v", trackerStats["trip_statistics"])
-				}
 			}
 
 			lastCheckDate = currentDate
@@ -250,14 +243,6 @@ func runManagementWorkerWithTracker(ctx context.Context, cfg *config.Config, log
 				// 정류소 캐시 상태
 				routes, stations := redisCache.GetCacheStatistics()
 				logger.Infof("📦 정류소 캐시: %d노선/%d정류소", routes, stations)
-
-				// BusTracker 상태
-				trackerStats := dataManager.GetBusTrackerStatistics()
-				if trackerEnabled, ok := trackerStats["tracker_enabled"].(bool); ok && trackerEnabled {
-					trackedBuses := trackerStats["tracked_buses"]
-					dailyTripCount := trackerStats["daily_trip_count"]
-					logger.Infof("🚌 BusTracker: 추적중 %v대, 일일운행 %v건", trackedBuses, dailyTripCount)
-				}
 
 				// Redis 버스 데이터 통계
 				if redisStats, err := redisBusManager.GetBusStatistics(); err == nil {
@@ -278,8 +263,8 @@ func runManagementWorkerWithTracker(ctx context.Context, cfg *config.Config, log
 	}
 }
 
-// printStatusWithTracker BusTracker 포함 상태 출력
-func printStatusWithTracker(logger *utils.Logger, dataManager *services.SimplifiedUnifiedDataManager,
+// printStatusWithTracker BusTracker 포함 상태 출력 (타입명 변경)
+func printStatusWithTracker(logger *utils.Logger, dataManager *services.UnifiedDataManager,
 	redisCache *cache.RedisStationCacheServiceV2, orchestrator *services.MultiAPIOrchestrator) {
 
 	logger.Info("📊 === 정기 상태 보고 ===")
@@ -287,33 +272,6 @@ func printStatusWithTracker(logger *utils.Logger, dataManager *services.Simplifi
 	// 정류소 캐시 상태
 	routes, stations := redisCache.GetCacheStatistics()
 	logger.Infof("📦 정류소 캐시 현황 - %d노선/%d정류소", routes, stations)
-
-	// BusTracker 상태
-	trackerStats := dataManager.GetBusTrackerStatistics()
-	if trackerEnabled, ok := trackerStats["tracker_enabled"].(bool); ok && trackerEnabled {
-		trackedBuses := trackerStats["tracked_buses"]
-		dailyTripCount := trackerStats["daily_trip_count"]
-		currentDate := trackerStats["current_operating_date"]
-		logger.Infof("🚌 BusTracker 현황 - 추적중: %v대, 일일운행: %v건, 운영일: %v",
-			trackedBuses, dailyTripCount, currentDate)
-
-		// 상위 5개 차량의 운행 차수 출력
-		if tripStats, ok := trackerStats["trip_statistics"].(map[string]int); ok && len(tripStats) > 0 {
-			count := 0
-			var topVehicles []string
-			for plateNo, tripCount := range tripStats {
-				if count < 5 {
-					topVehicles = append(topVehicles, fmt.Sprintf("%s(%d차수)", plateNo, tripCount))
-				}
-				count++
-			}
-			if len(topVehicles) > 0 {
-				logger.Infof("   🏆 운행 현황: %s", strings.Join(topVehicles, ", "))
-			}
-		}
-	} else {
-		logger.Errorf("❌ BusTracker 비활성화: %v", trackerStats["error"])
-	}
 
 	// 오케스트레이터 기본 상태
 	orchStats := orchestrator.GetDetailedStatistics()
