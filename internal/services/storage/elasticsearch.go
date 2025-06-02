@@ -71,10 +71,36 @@ func (es *ElasticsearchService) BulkSendBusLocations(indexName string, busLocati
 	// 현재 시간을 모든 데이터에 동일하게 적용 (동일 배치의 데이터이므로)
 	timestamp := time.Now().Format(time.RFC3339)
 
-	// 벌크 요청 바디 생성
-	for _, busLocation := range busLocations {
+	es.logger.Infof("📤 ES 전송 시작 - 인덱스: %s, 건수: %d건", indexName, len(busLocations))
+
+	// 전송할 모든 데이터 로깅
+	for i, busLocation := range busLocations {
 		// 모든 버스 데이터에 동일한 타임스탬프 적용
 		busLocation.Timestamp = timestamp
+
+		// 각 버스 데이터 상세 로깅
+		stationInfo := ""
+		if busLocation.NodeNm != "" {
+			stationInfo = fmt.Sprintf("%s(%d/%d)", busLocation.NodeNm, busLocation.GetStationOrder(), busLocation.TotalStations)
+		} else {
+			stationInfo = "정류장정보없음"
+		}
+
+		es.logger.Infof("📤 [%d/%d] %s: 노선=%d, T%d, 위치=%s, StationId=%d, StationSeq=%d, NodeOrd=%d, NodeId=%s, GPS=(%.6f,%.6f), 상태=%d, 혼잡=%d, 좌석=%d",
+			i+1, len(busLocations),
+			busLocation.PlateNo,
+			busLocation.RouteId,
+			busLocation.TripNumber,
+			stationInfo,
+			busLocation.StationId,
+			busLocation.StationSeq,
+			busLocation.NodeOrd,
+			busLocation.NodeId,
+			busLocation.GpsLati,
+			busLocation.GpsLong,
+			busLocation.StateCd,
+			busLocation.Crowded,
+			busLocation.RemainSeatCnt)
 
 		// 인덱스 메타데이터
 		meta := map[string]interface{}{
@@ -107,20 +133,27 @@ func (es *ElasticsearchService) BulkSendBusLocations(indexName string, busLocati
 		Body:  strings.NewReader(buf.String()),
 	}
 
+	es.logger.Infof("📤 ES 실제 전송 시작... (타임스탬프: %s)", timestamp)
+	sendStart := time.Now()
 	res, err := req.Do(context.Background(), es.client)
+	sendDuration := time.Since(sendStart)
+
 	if err != nil {
+		es.logger.Errorf("❌ ES 전송 실패 (소요시간: %v): %v", sendDuration, err)
 		return fmt.Errorf("벌크 요청 실행 실패: %v", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
 		body, _ := io.ReadAll(res.Body)
+		es.logger.Errorf("❌ ES 응답 오류 [%s] (소요시간: %v): %s", res.Status(), sendDuration, string(body))
 		return fmt.Errorf("벌크 요청 오류 [%s]: %s", res.Status(), string(body))
 	}
 
 	// 응답 파싱하여 에러 확인
 	var bulkResponse models.BulkResponse
 	if err := json.NewDecoder(res.Body).Decode(&bulkResponse); err != nil {
+		es.logger.Errorf("❌ ES 응답 파싱 실패 (소요시간: %v): %v", sendDuration, err)
 		return fmt.Errorf("벌크 응답 파싱 실패: %v", err)
 	}
 
@@ -128,20 +161,26 @@ func (es *ElasticsearchService) BulkSendBusLocations(indexName string, busLocati
 	errorCount := 0
 	successCount := 0
 
-	for _, item := range bulkResponse.Items {
+	for i, item := range bulkResponse.Items {
 		if item.Index.Error != nil {
 			errorCount++
-			es.logger.Errorf("벌크 인서트 오류: %s - %s", item.Index.Error.Type, item.Index.Error.Reason)
+			es.logger.Errorf("❌ ES 인덱싱 실패 [%d/%d] %s: %s - %s",
+				i+1, len(busLocations),
+				busLocations[i].PlateNo,
+				item.Index.Error.Type,
+				item.Index.Error.Reason)
 		} else {
 			successCount++
 		}
 	}
 
-	es.logger.Infof("벌크 인서트 완료 (%s) - 성공: %d, 실패: %d, 총 소요시간: %dms",
-		timestamp, successCount, errorCount, bulkResponse.Took)
-
 	if errorCount > 0 {
+		es.logger.Errorf("⚠️ ES 전송 부분 실패 - 성공: %d건, 실패: %d건, 소요시간: %v",
+			successCount, errorCount, sendDuration)
 		return fmt.Errorf("벌크 인서트 중 %d개 항목 실패", errorCount)
+	} else {
+		es.logger.Infof("✅ ES 전송 완료 - %d건 성공, 소요시간: %v",
+			successCount, sendDuration)
 	}
 
 	return nil

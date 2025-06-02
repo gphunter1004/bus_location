@@ -17,8 +17,6 @@ type UnifiedDataManagerInterface interface {
 	UpdateAPI1Data(busLocations []models.BusLocation)
 	UpdateAPI2Data(busLocations []models.BusLocation)
 	CleanupOldData(maxAge time.Duration) int
-	StartPeriodicESSync()
-	StopPeriodicESSync()
 	IsInitialLoadingDone() bool // 🔧 최초 로딩 완료 여부 확인 메서드 추가
 }
 
@@ -72,9 +70,6 @@ func (sao *SimplifiedMultiAPIOrchestrator) Start() error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	sao.logger.Info("✅ 최초 데이터 로딩 완료 확인 - 정상 운영 시작")
-
-	// Redis 기반 주기적 ES 동기화 시작
-	sao.dataManager.StartPeriodicESSync()
 
 	// API1 워커 시작
 	if len(sao.config.API1Config.RouteIDs) > 0 && sao.api1Client != nil {
@@ -259,9 +254,6 @@ func (sao *SimplifiedMultiAPIOrchestrator) Stop() {
 	}
 
 	sao.logger.Info("🔄 오케스트레이터 정지 중...")
-
-	// Redis 기반 주기적 ES 동기화 중지
-	sao.dataManager.StopPeriodicESSync()
 
 	// 모든 워커에게 정지 신호 전송
 	sao.cancel()

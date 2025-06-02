@@ -1,4 +1,4 @@
-// internal/services/redis/bus_data_manager.go - Part 1
+// internal/services/redis/bus_data_manager.go - Part 1 (tripNumber 로깅 강화)
 package redis
 
 import (
@@ -132,7 +132,7 @@ func (rbm *RedisBusDataManager) mergeDataSources(existing *RedisBusData, newSour
 	return result
 }
 
-// API1 전용: 상태정보만 안전 업데이트
+// API1 전용: 상태정보만 안전 업데이트 (tripNumber 로깅 강화)
 func (rbm *RedisBusDataManager) UpdateBusStatusOnly(busLocation models.BusLocation, dataSources []string) (bool, error) {
 	if rbm.redisClient == nil {
 		return false, fmt.Errorf("Redis 연결 없음")
@@ -156,6 +156,18 @@ func (rbm *RedisBusDataManager) UpdateBusStatusOnly(busLocation models.BusLocati
 	// 안전한 필드별 업데이트
 	var newData *RedisBusData
 	if existingData != nil {
+		// 🔢 tripNumber 변경 확인 및 로깅
+		oldTripNumber := existingData.TripNumber
+		newTripNumber := busLocation.TripNumber
+
+		if oldTripNumber != newTripNumber {
+			rbm.logger.Infof("🔢 Redis API1 TripNumber 변경 - 차량: %s, T%d → T%d",
+				plateNo, oldTripNumber, newTripNumber)
+		} else if newTripNumber > 0 {
+			rbm.logger.Debugf("🔒 Redis API1 TripNumber 유지 - 차량: %s, T%d",
+				plateNo, newTripNumber)
+		}
+
 		// 기존 데이터 복사 후 API1 필드만 업데이트
 		newData = &RedisBusData{
 			BusLocation: models.BusLocation{
@@ -172,7 +184,7 @@ func (rbm *RedisBusDataManager) UpdateBusStatusOnly(busLocation models.BusLocati
 				GpsLati:       existingData.GpsLati,
 				GpsLong:       existingData.GpsLong,
 				TotalStations: existingData.TotalStations,
-				TripNumber:    busLocation.TripNumber,
+				TripNumber:    newTripNumber, // 🔢 tripNumber 업데이트
 
 				// API1 전용 필드만 안전 업데이트
 				Crowded:       rbm.safeUpdateInt(existingData.Crowded, busLocation.Crowded),
@@ -197,7 +209,10 @@ func (rbm *RedisBusDataManager) UpdateBusStatusOnly(busLocation models.BusLocati
 			newData.ChangeCount++
 		}
 	} else {
-		// 새로운 버스인 경우
+		// 🆕 새로운 버스인 경우
+		rbm.logger.Infof("🆕 Redis API1 신규 버스 - 차량: %s, TripNumber: T%d",
+			plateNo, busLocation.TripNumber)
+
 		newData = &RedisBusData{
 			BusLocation:     busLocation,
 			LastRedisUpdate: now,
@@ -218,6 +233,10 @@ func (rbm *RedisBusDataManager) UpdateBusStatusOnly(busLocation models.BusLocati
 			return false, fmt.Errorf("데이터 마샬링 실패: %v", err)
 		}
 		pipe.Set(rbm.ctx, locationKey, locationData, rbm.dataTTL)
+
+		// 🔢 Redis 저장 완료 로깅
+		rbm.logger.Debugf("💾 Redis API1 저장 - 차량: %s, TripNumber: T%d",
+			plateNo, newData.BusLocation.TripNumber)
 	} else {
 		pipe.Expire(rbm.ctx, locationKey, rbm.dataTTL)
 	}

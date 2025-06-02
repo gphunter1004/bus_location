@@ -2,6 +2,7 @@
 package tracker
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -131,6 +132,7 @@ func (bt *BusTracker) TerminateBusTracking(plateNo string, reason string, logger
 }
 
 // IsStationChanged 정류장 변경 여부 확인 및 상태 업데이트
+// IsStationChanged 정류장 변경 여부 확인 및 상태 업데이트 (수정됨)
 func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, cacheKey string, totalStations int) (bool, int) {
 	now := time.Now()
 
@@ -172,13 +174,25 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ca
 			return false, info.TripNumber // 데이터 업데이트 하지 않음
 		}
 
-		tripNumber := bt.getNextTripNumber(plateNo)
+		// 🔧 tripNumber 증가 전에 현재 값 확인
+		currentTripNumber := info.TripNumber
+		nextTripNumber := bt.getNextTripNumber(plateNo)
+
+		// 🔧 실제로 증가했는지 확인
+		if nextTripNumber <= currentTripNumber {
+			// 카운터가 제대로 증가하지 않았으면 강제 증가
+			bt.dailyTripCounters[plateNo] = currentTripNumber + 1
+			nextTripNumber = bt.dailyTripCounters[plateNo]
+			fmt.Printf("🔧 TripNumber 강제 증가: 차량=%s, %d → %d\n",
+				plateNo, currentTripNumber, nextTripNumber)
+		}
+
 		info.LastPosition = currentPosition
 		info.PreviousPosition = 0
 		info.LastSeenTime = now
 		info.StartPosition = currentPosition
 		info.IsTerminated = false
-		info.TripNumber = tripNumber
+		info.TripNumber = nextTripNumber
 		info.TripStartTime = now
 
 		// RouteId 업데이트
@@ -186,7 +200,7 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ca
 			info.RouteId = parsed
 		}
 
-		return true, tripNumber
+		return true, nextTripNumber
 	}
 
 	// 기존 버스 - 변경 확인
@@ -194,12 +208,12 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ca
 		info.PreviousPosition = info.LastPosition
 		info.LastPosition = currentPosition
 		info.LastSeenTime = now
-		return true, info.TripNumber
+		return true, info.TripNumber // 🔧 기존 tripNumber 유지
 	}
 
 	// 위치는 동일하지만 마지막 목격 시간은 업데이트
 	info.LastSeenTime = now
-	return false, info.TripNumber
+	return false, info.TripNumber // 🔧 기존 tripNumber 유지
 }
 
 // FilterChangedStations 정류장 변경된 버스만 필터링 (공통 로직)
@@ -251,4 +265,17 @@ func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, l
 	}
 
 	return changedBuses
+}
+
+// SetTripNumberDirectly 특정 버스의 tripNumber 직접 설정 (공개 메서드)
+func (bt *BusTracker) SetTripNumberDirectly(plateNo string, tripNumber int) {
+	bt.countersMutex.Lock()
+	bt.dailyTripCounters[plateNo] = tripNumber
+	bt.countersMutex.Unlock()
+
+	bt.mutex.Lock()
+	if info, exists := bt.busInfoMap[plateNo]; exists {
+		info.TripNumber = tripNumber
+	}
+	bt.mutex.Unlock()
 }
