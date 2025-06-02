@@ -1,10 +1,11 @@
-// internal/services/unified_manager.go - 메모리 사용 제거, Redis 전환
+// internal/services/unified_manager.go - 한 번만 중복 체크 버전
 package services
 
 import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bus-tracker/config"
@@ -36,10 +37,9 @@ type UnifiedDataManager struct {
 	indexName        string
 	busTracker       *tracker.BusTrackerWithDuplicateCheck
 
-	// 첫 실행 중복 체크 (필수 - ES 중복 방지용)
-	isFirstRun    bool
-	firstRunMutex sync.Mutex
-	recentESData  map[string]*storage.BusLastData
+	// 🚀 초기 중복 체크 (한 번만)
+	initialDuplicateCheckDone int32 // 0: 미완료, 1: 완료
+	duplicateCheckMutex       sync.Mutex
 }
 
 // NewUnifiedDataManager 통합 데이터 매니저 생성
@@ -51,16 +51,96 @@ func NewUnifiedDataManager(
 	duplicateChecker *storage.ElasticsearchDuplicateChecker,
 	indexName string) *UnifiedDataManager {
 
-	return &UnifiedDataManager{
-		logger:           logger,
-		stationCache:     stationCache,
-		esService:        esService,
-		redisBusManager:  redisBusManager,
-		duplicateChecker: duplicateChecker,
-		indexName:        indexName,
-		isFirstRun:       true,
-		recentESData:     make(map[string]*storage.BusLastData),
+	udm := &UnifiedDataManager{
+		logger:                    logger,
+		stationCache:              stationCache,
+		esService:                 esService,
+		redisBusManager:           redisBusManager,
+		duplicateChecker:          duplicateChecker,
+		indexName:                 indexName,
+		initialDuplicateCheckDone: 0,
 	}
+
+	// 🚀 시작 시 한 번만 중복 체크 실행
+	go udm.performInitialDuplicateCheck()
+
+	return udm
+}
+
+// 🚀 performInitialDuplicateCheck 시작 시 한 번만 중복 체크 수행
+func (udm *UnifiedDataManager) performInitialDuplicateCheck() {
+	udm.duplicateCheckMutex.Lock()
+	defer udm.duplicateCheckMutex.Unlock()
+
+	// 이미 완료된 경우 리턴
+	if atomic.LoadInt32(&udm.initialDuplicateCheckDone) == 1 {
+		return
+	}
+
+	if udm.duplicateChecker == nil {
+		udm.logger.Info("🔍 중복 체크 서비스 없음 - 초기 중복 체크 건너뛰기")
+		atomic.StoreInt32(&udm.initialDuplicateCheckDone, 1)
+		return
+	}
+
+	udm.logger.Info("🔍 초기 중복 체크 시작... (시작 시 한 번만 실행)")
+	startTime := time.Now()
+
+	// ES에서 최근 30분 데이터 조회
+	recentData, err := udm.duplicateChecker.GetRecentBusData(10)
+	if err != nil {
+		udm.logger.Errorf("초기 중복 체크 실패: %v", err)
+		atomic.StoreInt32(&udm.initialDuplicateCheckDone, 1)
+		return
+	}
+
+	if len(recentData) > 0 {
+		udm.logger.Infof("📋 ES 최근 데이터 발견: %d대", len(recentData))
+
+		// 🔧 발견된 데이터를 Redis에 "이미 존재하는 데이터"로 표시
+		syncCount := udm.markExistingDataInRedis(recentData)
+
+		udm.logger.Infof("✅ 초기 중복 체크 완료 - %d대 기존 데이터 Redis 동기화 (소요: %v)",
+			syncCount, time.Since(startTime).Round(time.Millisecond))
+	} else {
+		udm.logger.Info("ℹ️ ES에 최근 데이터 없음 - 신규 시작")
+	}
+
+	// 완료 표시
+	atomic.StoreInt32(&udm.initialDuplicateCheckDone, 1)
+	udm.logger.Info("🎯 초기 중복 체크 완료 - 이후 일반 모드로 동작")
+}
+
+// 🔧 markExistingDataInRedis ES의 기존 데이터를 Redis에 "이미 동기화됨"으로 표시
+func (udm *UnifiedDataManager) markExistingDataInRedis(recentData map[string]*storage.BusLastData) int {
+	syncCount := 0
+
+	for plateNo, esData := range recentData {
+		// ES 데이터를 BusLocation으로 변환
+		busLocation := models.BusLocation{
+			PlateNo:    plateNo,
+			RouteId:    esData.RouteId,
+			StationSeq: esData.StationSeq,
+			NodeOrd:    esData.NodeOrd,
+			StationId:  esData.StationId,
+			NodeId:     esData.NodeId,
+			TripNumber: esData.TripNumber,
+			Timestamp:  esData.LastUpdate.Format(time.RFC3339),
+		}
+
+		// Redis에 저장하되 "이미 ES 동기화 완료" 상태로 표시
+		_, err := udm.redisBusManager.UpdateBusLocation(busLocation, []string{"es_existing"})
+		if err != nil {
+			udm.logger.Debugf("기존 데이터 Redis 저장 실패 - 차량: %s, 오류: %v", plateNo, err)
+			continue
+		}
+
+		// 즉시 동기화 완료로 마킹
+		udm.redisBusManager.MarkAsSynced([]string{plateNo})
+		syncCount++
+	}
+
+	return syncCount
 }
 
 // InitializeBusTracker BusTracker 초기화
@@ -95,7 +175,7 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 			continue
 		}
 
-		// Redis 상태 업데이트만 (메모리 버퍼 제거)
+		// Redis 상태 업데이트만
 		statusUpdated, err := udm.redisBusManager.UpdateBusStatusOnly(bus, []string{"api1"})
 		if err != nil {
 			udm.logger.Errorf("Redis 상태 업데이트 실패 - 차량: %s, 오류: %v", bus.PlateNo, err)
@@ -110,7 +190,7 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 		}
 	}
 
-	// 로그 출력 (병합버퍼 제거)
+	// 로그 출력
 	if statusUpdatedCount > 0 {
 		udm.logger.Infof("API1 상태처리: 수신=%d, 처리=%d, 상태갱신=%d(차량:%s)",
 			len(busLocations), processedCount, statusUpdatedCount,
@@ -121,23 +201,17 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 	}
 }
 
-// UpdateAPI2Data API2 위치정보 처리 - Redis 기반 병합 + 벌크 전송
+// 🚀 UpdateAPI2Data API2 위치정보 처리 - 중복 체크 완전 제거
 func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation) {
 	if len(busLocations) == 0 {
 		return
-	}
-
-	if udm.isFirstRun {
-		udm.loadRecentESDataForFirstRun()
 	}
 
 	enrichedBuses := udm.enrichBusesWithTripNumber(busLocations, "API2")
 
 	processedCount := 0
 	locationChangedCount := 0
-	duplicateCount := 0
 	var locationChangedPlates []string
-	var duplicateVehicles []string
 
 	// Step 1: Redis에 저장하고 위치 변경된 차량들 수집
 	for _, bus := range enrichedBuses {
@@ -145,18 +219,10 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 			continue
 		}
 
-		// 첫 실행 시 중복 체크 (필수 - ES 중복 방지)
-		if udm.isDuplicateDataForFirstRun(bus.PlateNo, bus) {
-			duplicateCount++
-			duplicateVehicles = append(duplicateVehicles, bus.PlateNo)
-			udm.redisBusManager.UpdateBusLocation(bus, []string{"api2"})
-			continue
-		}
-
-		// 🔧 API1 상태정보 Redis 기반 병합 (메모리 버퍼 제거)
+		// 🔧 API1 상태정보 Redis 기반 병합
 		mergedBus := udm.mergeWithRedisAPI1Data(bus)
 
-		// Redis 위치정보 업데이트 (병합된 데이터로)
+		// Redis 위치정보 업데이트
 		locationChanged, err := udm.redisBusManager.UpdateBusLocation(mergedBus, []string{"api2"})
 		if err != nil {
 			udm.logger.Errorf("Redis 위치 업데이트 실패 - 차량: %s, 오류: %v", bus.PlateNo, err)
@@ -177,12 +243,8 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 		udm.sendBulkToElasticsearch(locationChangedPlates)
 	}
 
-	// 로그 출력
-	if duplicateCount > 0 {
-		udm.logger.Infof("API2 위치처리: 수신=%d, 처리=%d, 중복=%d(차량:%s), 위치변경=%d, ES벌크전송=%d",
-			len(busLocations), processedCount, duplicateCount,
-			udm.formatVehicleList(duplicateVehicles), locationChangedCount, len(locationChangedPlates))
-	} else if locationChangedCount > 0 {
+	// 🚀 깔끔한 로그 출력 (중복 체크 로직 완전 제거)
+	if locationChangedCount > 0 {
 		udm.logger.Infof("API2 위치처리: 수신=%d, 처리=%d, 위치변경=%d(차량:%s), ES벌크전송=%d",
 			len(busLocations), processedCount, locationChangedCount,
 			udm.formatVehicleList(locationChangedPlates), len(locationChangedPlates))
@@ -192,7 +254,7 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 	}
 }
 
-// 🔧 Redis 기반 API1 상태정보 병합 (메모리 버퍼 대체)
+// 🔧 Redis 기반 API1 상태정보 병합
 func (udm *UnifiedDataManager) mergeWithRedisAPI1Data(api2Bus models.BusLocation) models.BusLocation {
 	// Redis에서 현재 버스의 최신 데이터 조회
 	redisData, err := udm.redisBusManager.GetBusLocationData(api2Bus.PlateNo)
@@ -205,7 +267,7 @@ func (udm *UnifiedDataManager) mergeWithRedisAPI1Data(api2Bus models.BusLocation
 	// Redis에서 가져온 API1 상태정보와 API2 위치정보 병합
 	mergedBus := api2Bus
 
-	// API1의 상태정보 병합 (Redis에서 가져온 값, 유효한 값만)
+	// API1의 상태정보 병합 (유효한 값만)
 	if redisData.Crowded > 0 {
 		mergedBus.Crowded = redisData.Crowded
 	}
@@ -333,54 +395,6 @@ func (udm *UnifiedDataManager) enrichBusesWithTripNumber(busLocations []models.B
 	return enrichedBuses
 }
 
-// loadRecentESDataForFirstRun 첫 실행 시 ES에서 최근 데이터 로드 (필수 - ES 중복 방지)
-func (udm *UnifiedDataManager) loadRecentESDataForFirstRun() {
-	udm.firstRunMutex.Lock()
-	defer udm.firstRunMutex.Unlock()
-
-	if !udm.isFirstRun {
-		return
-	}
-
-	udm.isFirstRun = false
-
-	if udm.duplicateChecker == nil {
-		return
-	}
-
-	udm.logger.Info("🔍 첫 실행 중복 체크 데이터 로딩...")
-
-	recentData, err := udm.duplicateChecker.GetRecentBusData(30)
-	if err != nil {
-		udm.logger.Errorf("첫 실행 ES 데이터 조회 실패: %v", err)
-		return
-	}
-
-	udm.recentESData = recentData
-
-	if len(recentData) > 0 {
-		udm.logger.Infof("✅ 중복 체크 데이터 로드 완료: %d대", len(recentData))
-	}
-}
-
-// isDuplicateDataForFirstRun 첫 실행 시 중복 데이터 확인 (필수 - ES 중복 방지)
-func (udm *UnifiedDataManager) isDuplicateDataForFirstRun(plateNo string, bus models.BusLocation) bool {
-	if len(udm.recentESData) == 0 {
-		return false
-	}
-
-	esData, found := udm.recentESData[plateNo]
-	if !found {
-		return false
-	}
-
-	isDup := esData.IsDuplicateData(bus.StationSeq, bus.NodeOrd, bus.StationId, bus.NodeId)
-	if isDup {
-		udm.logger.Infof("🔄 중복 데이터 감지 - 차량: %s", plateNo)
-	}
-	return isDup
-}
-
 // getStationOrder 정류장 순서 추출
 func (udm *UnifiedDataManager) getStationOrder(bus models.BusLocation) int {
 	if bus.NodeOrd > 0 {
@@ -431,6 +445,14 @@ func (udm *UnifiedDataManager) formatVehicleList(vehicles []string) string {
 		return strings.Join(vehicles, ",")
 	}
 	return fmt.Sprintf("%s 외 %d대", strings.Join(vehicles[:1], ","), len(vehicles)-1)
+}
+
+// 🚀 GetInitialCheckStatus 초기 중복 체크 상태 조회 (디버깅용)
+func (udm *UnifiedDataManager) GetInitialCheckStatus() map[string]interface{} {
+	return map[string]interface{}{
+		"initial_duplicate_check_done": atomic.LoadInt32(&udm.initialDuplicateCheckDone) == 1,
+		"duplicate_checker_available":  udm.duplicateChecker != nil,
+	}
 }
 
 // 인터페이스 구현 확인

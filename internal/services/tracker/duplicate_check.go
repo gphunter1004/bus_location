@@ -189,7 +189,6 @@ func (bt *BusTrackerWithDuplicateCheck) isStationChangedWithDuplicateCheck(plate
 	info, exists := bt.BusTracker.busInfoMap[plateNo]
 
 	if !exists {
-		// 새로운 버스인 경우 - 🔧 중복 체크 로직만 추가
 		// 첫 실행에서만 ES 중복 체크 수행
 		if len(bt.recentESData) > 0 {
 			if esData, found := bt.recentESData[plateNo]; found {
