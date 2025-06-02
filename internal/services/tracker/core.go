@@ -1,4 +1,4 @@
-// internal/services/tracker/bus_tracker_core.go - 간소화된 추적 로직
+// internal/services/tracker/core.go - 공통 로직 포함 기본 구현
 package tracker
 
 import (
@@ -49,6 +49,87 @@ func NewBusTracker(cfg *config.Config) *BusTracker {
 	}
 }
 
+// isNearTerminal 종점 인근인지 확인 (전체 정류소 수의 90% 이상)
+func (bt *BusTracker) isNearTerminal(position int64, totalStations int) bool {
+	if totalStations <= 0 {
+		return false
+	}
+
+	// 전체 정류소 수의 90% 이상이면 종점 인근으로 간주
+	threshold := int64(float64(totalStations) * 0.9)
+	if threshold < int64(totalStations-2) {
+		threshold = int64(totalStations - 2) // 최소한 마지막 2개 정류소는 종점 인근
+	}
+
+	return position >= threshold
+}
+
+// shouldSkipTerminalAreaNewTrip 종점 인근에서 새로운 차수 시작 시 스킵 여부 결정
+func (bt *BusTracker) shouldSkipTerminalAreaNewTrip(plateNo string, currentPosition int64, totalStations int, logger *utils.Logger) bool {
+	info, exists := bt.busInfoMap[plateNo]
+
+	// 기존 추적 정보가 없으면 스킵하지 않음
+	if !exists {
+		return false
+	}
+
+	// 종료되지 않은 버스면 스킵하지 않음
+	if !info.IsTerminated {
+		return false
+	}
+
+	// 현재 위치가 종점 인근이 아니면 스킵하지 않음
+	if !bt.isNearTerminal(currentPosition, totalStations) {
+		return false
+	}
+
+	// 마지막 위치도 종점 인근이었고, 현재도 종점 인근이면 스킵
+	if bt.isNearTerminal(info.LastPosition, totalStations) {
+		if logger != nil {
+			logger.Infof("🚫 종점 인근 차수 시작 스킵 - 차량: %s, 위치: %d/%d (이전: %d)",
+				plateNo, currentPosition, totalStations, info.LastPosition)
+		}
+
+		// 마지막 목격 시간만 업데이트하고 스킵
+		info.LastSeenTime = time.Now()
+		return true
+	}
+
+	return false
+}
+
+// shouldTerminateAtTerminal 종점 도착 시 종료
+func (bt *BusTracker) shouldTerminateAtTerminal(plateNo string, currentPosition, totalStations int64) bool {
+	if totalStations <= 0 {
+		return false
+	}
+
+	// 마지막 정류장에 도착한 경우 (전체 정류소 수와 동일하거나 그 이상)
+	return currentPosition >= totalStations
+}
+
+// TerminateBusTracking 버스 운행 종료 처리
+func (bt *BusTracker) TerminateBusTracking(plateNo string, reason string, logger *utils.Logger) bool {
+	bt.mutex.Lock()
+	defer bt.mutex.Unlock()
+
+	info, exists := bt.busInfoMap[plateNo]
+	if !exists || info.IsTerminated {
+		return false
+	}
+
+	// 종료 상태로 마킹
+	info.IsTerminated = true
+
+	if logger != nil {
+		operatingDate := getDailyOperatingDate(time.Now(), bt.config)
+		logger.Infof("버스 운행 종료 - 차량번호: %s, 노선ID: %d, %s %d차수 완료, 이유: %s",
+			plateNo, info.RouteId, operatingDate, info.TripNumber, reason)
+	}
+
+	return true
+}
+
 // IsStationChanged 정류장 변경 여부 확인 및 상태 업데이트
 func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, cacheKey string, totalStations int) (bool, int) {
 	now := time.Now()
@@ -86,6 +167,11 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ca
 
 	// 종료된 버스가 다시 나타난 경우 (새로운 운행 시작)
 	if info.IsTerminated {
+		// 🔧 종점 인근에서 새로운 차수 시작하는 경우 스킵 체크
+		if bt.shouldSkipTerminalAreaNewTrip(plateNo, currentPosition, totalStations, nil) {
+			return false, info.TripNumber // 데이터 업데이트 하지 않음
+		}
+
 		tripNumber := bt.getNextTripNumber(plateNo)
 		info.LastPosition = currentPosition
 		info.PreviousPosition = 0
@@ -116,9 +202,10 @@ func (bt *BusTracker) IsStationChanged(plateNo string, currentPosition int64, ca
 	return false, info.TripNumber
 }
 
-// FilterChangedStations 정류장 변경된 버스만 필터링
+// FilterChangedStations 정류장 변경된 버스만 필터링 (공통 로직)
 func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, logger *utils.Logger) []models.BusLocation {
 	var changedBuses []models.BusLocation
+	var skippedBuses []string
 
 	// 현재 배치에서 발견된 버스들의 마지막 목격 시간 업데이트
 	for _, bus := range busLocations {
@@ -136,6 +223,12 @@ func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, l
 		// 캐시 키 (RouteId 기반)
 		cacheKey := bus.GetCacheKey()
 
+		// 🔧 종점 인근 새로운 차수 시작 스킵 체크
+		if bt.shouldSkipTerminalAreaNewTrip(bus.PlateNo, currentPosition, bus.TotalStations, logger) {
+			skippedBuses = append(skippedBuses, bus.PlateNo)
+			continue
+		}
+
 		// 종점 도착 시 종료 (config에서 활성화된 경우만)
 		if bt.config.EnableTerminalStop && bt.shouldTerminateAtTerminal(bus.PlateNo, currentPosition, int64(bus.TotalStations)) {
 			bt.TerminateBusTracking(bus.PlateNo, "종점 도달", logger)
@@ -152,37 +245,10 @@ func (bt *BusTracker) FilterChangedStations(busLocations []models.BusLocation, l
 		}
 	}
 
+	// 스킵된 버스가 있으면 로그 출력
+	if len(skippedBuses) > 0 {
+		logger.Infof("🚫 종점 인근 차수 시작 스킵: %d대 (%v)", len(skippedBuses), skippedBuses)
+	}
+
 	return changedBuses
-}
-
-// shouldTerminateAtTerminal 종점 도착 시 종료
-func (bt *BusTracker) shouldTerminateAtTerminal(plateNo string, currentPosition, totalStations int64) bool {
-	if totalStations <= 0 {
-		return false
-	}
-
-	// 마지막 정류장에 도착한 경우 (전체 정류소 수와 동일하거나 그 이상)
-	return currentPosition >= totalStations
-}
-
-// TerminateBusTracking 버스 운행 종료 처리
-func (bt *BusTracker) TerminateBusTracking(plateNo string, reason string, logger *utils.Logger) bool {
-	bt.mutex.Lock()
-	defer bt.mutex.Unlock()
-
-	info, exists := bt.busInfoMap[plateNo]
-	if !exists || info.IsTerminated {
-		return false
-	}
-
-	// 종료 상태로 마킹
-	info.IsTerminated = true
-
-	if logger != nil {
-		operatingDate := getDailyOperatingDate(time.Now(), bt.config)
-		logger.Infof("버스 운행 종료 - 차량번호: %s, 노선ID: %d, %s %d차수 완료, 이유: %s",
-			plateNo, info.RouteId, operatingDate, info.TripNumber, reason)
-	}
-
-	return true
 }

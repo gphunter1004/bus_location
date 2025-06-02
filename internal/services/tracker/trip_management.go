@@ -1,4 +1,4 @@
-// internal/services/tracker/bus_tracker_trip_management.go - 운행 차수 관리
+// internal/services/tracker/trip_management.go - 캐시 기반 운행 차수 관리 추가
 package tracker
 
 import (
@@ -41,6 +41,18 @@ func (bt *BusTracker) getNextTripNumber(plateNo string) int {
 	return bt.dailyTripCounters[plateNo]
 }
 
+// 🆕 getNextTripNumberFromCache 캐시 기반 다음 운행 차수 반환
+func (bt *BusTracker) getNextTripNumberFromCache(plateNo string) int {
+	bt.countersMutex.Lock()
+	defer bt.countersMutex.Unlock()
+
+	// 기존 캐시된 값이 있으면 그 다음 차수 반환
+	currentTrip := bt.dailyTripCounters[plateNo]
+	bt.dailyTripCounters[plateNo] = currentTrip + 1
+
+	return bt.dailyTripCounters[plateNo]
+}
+
 // ResetDailyTripCounters 일일 운행 차수 카운터 수동 리셋
 func (bt *BusTracker) ResetDailyTripCounters() {
 	now := time.Now()
@@ -75,40 +87,6 @@ func (bt *BusTracker) GetBusTripCount(plateNo string) int {
 	defer bt.countersMutex.RUnlock()
 
 	return bt.dailyTripCounters[plateNo]
-}
-
-// GetCurrentOperatingDate 현재 운영일자 반환
-func (bt *BusTracker) GetCurrentOperatingDate() string {
-	bt.countersMutex.RLock()
-	defer bt.countersMutex.RUnlock()
-	return bt.currentDate
-}
-
-// GetLastResetTime 마지막 리셋 시간 반환
-func (bt *BusTracker) GetLastResetTime() time.Time {
-	bt.countersMutex.RLock()
-	defer bt.countersMutex.RUnlock()
-	return bt.lastResetTime
-}
-
-// ForceNewOperatingDay 운영일 강제 변경 (테스트용)
-func (bt *BusTracker) ForceNewOperatingDay(newDate string) {
-	bt.countersMutex.Lock()
-	defer bt.countersMutex.Unlock()
-
-	bt.dailyTripCounters = make(map[string]int)
-	bt.currentDate = newDate
-	bt.lastResetTime = time.Now()
-
-	// 기존 추적 정보의 종료 상태도 모두 리셋 (새로운 날 시작)
-	bt.mutex.Lock()
-	for _, info := range bt.busInfoMap {
-		if info.IsTerminated {
-			info.IsTerminated = false
-			info.TripNumber = 0 // 새로운 날이므로 차수도 리셋
-		}
-	}
-	bt.mutex.Unlock()
 }
 
 // getDailyOperatingDate 운영일자 계산 (운영시간 기준)
