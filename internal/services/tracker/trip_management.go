@@ -64,24 +64,6 @@ func (bt *BusTracker) ResetDailyTripCounters() {
 	bt.mutex.Unlock()
 }
 
-// GetDailyTripStatistics 차량별 일일 운행 차수 통계 반환
-func (bt *BusTracker) GetDailyTripStatistics() map[string]int {
-	now := time.Now()
-
-	// 자동 리셋 확인
-	bt.checkAndResetDailyCounters(now)
-
-	bt.countersMutex.RLock()
-	defer bt.countersMutex.RUnlock()
-
-	// 복사본 반환
-	stats := make(map[string]int)
-	for plateNo, tripCount := range bt.dailyTripCounters {
-		stats[plateNo] = tripCount
-	}
-	return stats
-}
-
 // GetBusTripCount 특정 차량의 일일 운행 차수 반환
 func (bt *BusTracker) GetBusTripCount(plateNo string) int {
 	now := time.Now()

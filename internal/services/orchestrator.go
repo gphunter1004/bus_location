@@ -247,12 +247,6 @@ func (sao *SimplifiedMultiAPIOrchestrator) IsRunning() bool {
 	return sao.isRunning
 }
 
-// GetStatistics 통계 정보 반환 (단순화)
-func (sao *SimplifiedMultiAPIOrchestrator) GetStatistics() (totalBuses, api1Only, api2Only, both int) {
-	// 통계 기능 제거
-	return 0, 0, 0, 0
-}
-
 // GetDetailedStatistics 상세 통계 정보 반환 (단순화)
 func (sao *SimplifiedMultiAPIOrchestrator) GetDetailedStatistics() map[string]interface{} {
 	stats := make(map[string]interface{})

@@ -4,8 +4,6 @@ package redis
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -626,34 +624,4 @@ func (rbm *RedisBusDataManager) SetBusTerminated(plateNo string, reason string) 
 
 	rbm.logger.Infof("🔚 버스 종료 처리 완료 - 차량: %s, 이유: %s", plateNo, reason)
 	return nil
-}
-
-// GetRouteStatistics 노선별 통계 조회
-func (rbm *RedisBusDataManager) GetRouteStatistics() (map[int64]int, error) {
-	if rbm.redisClient == nil {
-		return nil, fmt.Errorf("Redis 연결 없음")
-	}
-
-	pattern := rbm.keyPrefix + "route:*:active"
-	keys, err := rbm.redisClient.Keys(rbm.ctx, pattern).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	routeStats := make(map[int64]int)
-
-	for _, key := range keys {
-		// 키에서 노선 ID 추출: "bus:route:233000266:active" -> "233000266"
-		parts := strings.Split(key, ":")
-		if len(parts) >= 3 {
-			if routeId, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
-				count, err := rbm.redisClient.SCard(rbm.ctx, key).Result()
-				if err == nil {
-					routeStats[routeId] = int(count)
-				}
-			}
-		}
-	}
-
-	return routeStats, nil
 }
