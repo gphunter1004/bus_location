@@ -1,4 +1,4 @@
-// internal/services/unified_manager.go - tracker에서만 tripNumber 관리 버전
+// internal/services/unified_manager.go
 package services
 
 import (
@@ -83,13 +83,13 @@ func (udm *UnifiedDataManager) PerformInitialDataLoading(api1Client interface{},
 		esData = make(map[string]*storage.BusLastData)
 	}
 
-	// Step 2: API1 호출하여 Redis에 적재 (tripNumber 제외)
+	// Step 2: API1 호출하여 Redis에 적재
 	api1Data, err := udm.loadAPI1DataToRedis(api1Client)
 	if err != nil {
 		return fmt.Errorf("API1 데이터 로딩 실패: %v", err)
 	}
 
-	// Step 3: API2 호출하여 Redis에 적재 (tripNumber 제외)
+	// Step 3: API2 호출하여 Redis에 적재
 	api2Data, err := udm.loadAPI2DataToRedis(api2Client)
 	if err != nil {
 		return fmt.Errorf("API2 데이터 로딩 실패: %v", err)
@@ -129,9 +129,9 @@ func (udm *UnifiedDataManager) loadESLatestDataForComparison() (map[string]*stor
 	return esData, nil
 }
 
-// 🔧 loadAPI1DataToRedis API1 데이터를 Redis에 로딩 (tripNumber 제외)
+// 🔧 loadAPI1DataToRedis API1 데이터를 Redis에 로딩
 func (udm *UnifiedDataManager) loadAPI1DataToRedis(api1Client interface{}) ([]models.BusLocation, error) {
-	udm.logger.Info("📥 Step 2: API1 데이터 로딩 중... (tripNumber 제외)")
+	udm.logger.Info("📥 Step 2: API1 데이터 로딩 중... ")
 
 	// API1Client 타입 확인 및 호출
 	client, ok := api1Client.(interface {
@@ -168,13 +168,13 @@ func (udm *UnifiedDataManager) loadAPI1DataToRedis(api1Client interface{}) ([]mo
 		successCount++
 	}
 
-	udm.logger.Infof("✅ API1 Redis 저장 완료: %d/%d건 (tripNumber 제외)", successCount, len(busLocations))
+	udm.logger.Infof("✅ API1 Redis 저장 완료: %d/%d건 ", successCount, len(busLocations))
 	return busLocations, nil
 }
 
-// 🔧 loadAPI2DataToRedis API2 데이터를 Redis에 로딩 (tripNumber 제외)
+// 🔧 loadAPI2DataToRedis API2 데이터를 Redis에 로딩
 func (udm *UnifiedDataManager) loadAPI2DataToRedis(api2Client interface{}) ([]models.BusLocation, error) {
-	udm.logger.Info("📥 Step 3: API2 데이터 로딩 중... (tripNumber 제외)")
+	udm.logger.Info("📥 Step 3: API2 데이터 로딩 중... ")
 
 	// API2Client 타입 확인 및 호출
 	client, ok := api2Client.(interface {
@@ -214,7 +214,7 @@ func (udm *UnifiedDataManager) loadAPI2DataToRedis(api2Client interface{}) ([]mo
 		successCount++
 	}
 
-	udm.logger.Infof("✅ API2 Redis 저장 완료: %d/%d건 (tripNumber 제외)", successCount, len(busLocations))
+	udm.logger.Infof("✅ API2 Redis 저장 완료: %d/%d건 ", successCount, len(busLocations))
 	return busLocations, nil
 }
 
@@ -341,7 +341,7 @@ func (udm *UnifiedDataManager) isLocationSameAsES(plateNo string, redisBus model
 	return redisPosition == esPosition
 }
 
-// mergeWithRedisAPI1Data API1과 API2 데이터 병합 (tripNumber 제외)
+// 🔧 mergeWithRedisAPI1Data API1과 API2 데이터 병합
 func (udm *UnifiedDataManager) mergeWithRedisAPI1Data(api2Bus models.BusLocation) models.BusLocation {
 	redisData, err := udm.redisBusManager.GetBusLocationData(api2Bus.PlateNo)
 	if err != nil || redisData == nil {
@@ -350,7 +350,7 @@ func (udm *UnifiedDataManager) mergeWithRedisAPI1Data(api2Bus models.BusLocation
 
 	mergedBus := api2Bus
 
-	// API1 상태정보 병합 (tripNumber 제외)
+	// API1 상태정보 병합
 	if redisData.Crowded > 0 {
 		mergedBus.Crowded = redisData.Crowded
 	}
@@ -373,9 +373,6 @@ func (udm *UnifiedDataManager) mergeWithRedisAPI1Data(api2Bus models.BusLocation
 		mergedBus.VehId = redisData.VehId
 	}
 
-	// 🔧 tripNumber는 Redis에서 가져오지 않음 (tracker에서만 관리)
-	// mergedBus.TripNumber는 API2Bus의 원본값(0) 유지
-
 	return mergedBus
 }
 
@@ -385,7 +382,7 @@ func (udm *UnifiedDataManager) IsInitialLoadingDone() bool {
 }
 
 // 🔧 일반 운영 모드 (최초 로딩 완료 후) - tripNumber는 변경하지 않음
-// UpdateAPI1Data API1 상태정보 처리 (일반 모드 - tripNumber 변경 없음)
+// UpdateAPI1Data API1 상태정보 처리 (일반 모드 - tripNumber는 tracker에서만 관리)
 func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation) {
 	if len(busLocations) == 0 {
 		return
@@ -397,35 +394,33 @@ func (udm *UnifiedDataManager) UpdateAPI1Data(busLocations []models.BusLocation)
 		return
 	}
 
-	// 🔧 tripNumber는 변경하지 않고 Redis 기존값 유지
+	// 🔧 모든 버스에 대해 목격 시간 업데이트 (tripNumber는 건드리지 않음)
+	for _, bus := range busLocations {
+		if bus.PlateNo != "" {
+			udm.simpleBusTracker.UpdateLastSeenTime(bus.PlateNo)
+		}
+	}
+
+	// 🔧 tripNumber는 건드리지 않고 Redis에 상태정보만 업데이트
 	processedCount := 0
 	for _, bus := range busLocations {
 		if bus.PlateNo == "" || bus.RouteId == 0 {
 			continue
 		}
 
-		// 🔧 Redis에서 기존 tripNumber 가져와서 설정
-		if redisData, err := udm.redisBusManager.GetBusLocationData(bus.PlateNo); err == nil && redisData != nil {
-			bus.TripNumber = redisData.TripNumber // 기존값 유지
-			udm.logger.Debugf("🔒 API1 tripNumber 유지 - %s: T%d", bus.PlateNo, bus.TripNumber)
-		} else {
-			bus.TripNumber = 0 // Redis에 없으면 0 (tracker에서 나중에 설정)
-			udm.logger.Debugf("🔧 API1 tripNumber 초기화 - %s: T0", bus.PlateNo)
-		}
+		// 🔧 tripNumber는 전혀 설정하지 않음 - tracker 전담
+		// bus 구조체의 기본값(0) 그대로 사용
 
 		_, err := udm.redisBusManager.UpdateBusStatusOnly(bus, []string{"api1"})
 		if err == nil {
 			processedCount++
 		}
-
-		// tracker에서 목격 시간만 업데이트 (tripNumber 변경 없음)
-		udm.simpleBusTracker.UpdateLastSeenTime(bus.PlateNo)
 	}
 
-	udm.logger.Infof("API1 일반처리: 수신=%d, 처리=%d (tripNumber 변경 없음)", len(busLocations), processedCount)
+	udm.logger.Infof("API1 일반처리: 수신=%d, 처리=%d (tripNumber 미관여)", len(busLocations), processedCount)
 }
 
-// UpdateAPI2Data API2 위치정보 처리 (일반 모드 - tripNumber 변경 없음)
+// UpdateAPI2Data API2 위치정보 처리 (일반 모드 - tripNumber는 tracker에서만 관리)
 func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation) {
 	if len(busLocations) == 0 {
 		return
@@ -437,26 +432,14 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 		return
 	}
 
-	// 🔧 tripNumber는 변경하지 않고 Redis 기존값 유지
-	for i := range busLocations {
-		if busLocations[i].PlateNo == "" || busLocations[i].RouteId == 0 {
-			continue
+	// 🔧 모든 버스에 대해 목격 시간 업데이트 (tripNumber는 건드리지 않음)
+	for _, bus := range busLocations {
+		if bus.PlateNo != "" {
+			udm.simpleBusTracker.UpdateLastSeenTime(bus.PlateNo)
 		}
-
-		// 🔧 Redis에서 기존 tripNumber 가져와서 설정
-		if redisData, err := udm.redisBusManager.GetBusLocationData(busLocations[i].PlateNo); err == nil && redisData != nil {
-			busLocations[i].TripNumber = redisData.TripNumber // 기존값 유지
-			udm.logger.Debugf("🔒 API2 tripNumber 유지 - %s: T%d", busLocations[i].PlateNo, busLocations[i].TripNumber)
-		} else {
-			busLocations[i].TripNumber = 0 // Redis에 없으면 0 (tracker에서 나중에 설정)
-			udm.logger.Debugf("🔧 API2 tripNumber 초기화 - %s: T0", busLocations[i].PlateNo)
-		}
-
-		// tracker에서 목격 시간만 업데이트 (tripNumber 변경 없음)
-		udm.simpleBusTracker.UpdateLastSeenTime(busLocations[i].PlateNo)
 	}
 
-	// 🔧 단순화된 추적기로 변경된 버스만 필터링 (tracker에서 tripNumber 관리)
+	// 🔧 tracker에서 변경된 버스만 필터링 (여기서 tripNumber가 할당됨)
 	changedBuses := udm.simpleBusTracker.FilterChangedBuses(busLocations)
 
 	processedCount := 0
@@ -468,7 +451,10 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 			continue
 		}
 
+		// 🔧 tripNumber는 설정하지 않음 - tracker에서 관리하도록 위임
+		// API1 데이터와 병합
 		mergedBus := udm.mergeWithRedisAPI1Data(bus)
+
 		locationChanged, err := udm.redisBusManager.UpdateBusLocation(mergedBus, []string{"api2"})
 		if err != nil {
 			continue
@@ -481,7 +467,7 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 		}
 	}
 
-	// ES 전송 (tracker에서 변경 감지된 버스만)
+	// ES 전송 (tracker에서 변경 감지되고 tripNumber가 할당된 버스만)
 	if len(changedBuses) > 0 {
 		udm.sendBulkToElasticsearch(changedBuses)
 	}
@@ -490,38 +476,48 @@ func (udm *UnifiedDataManager) UpdateAPI2Data(busLocations []models.BusLocation)
 		len(busLocations), processedCount, locationChangedCount, len(changedBuses), len(changedBuses))
 }
 
-// sendBulkToElasticsearch ES 벌크 전송 (tracker 처리된 버스만)
+// sendBulkToElasticsearch ES 벌크 전송 (tracker에서 tripNumber 할당된 버스만)
 func (udm *UnifiedDataManager) sendBulkToElasticsearch(changedBuses []models.BusLocation) {
 	if len(changedBuses) == 0 || udm.esService == nil {
 		return
 	}
 
-	udm.logger.Infof("📤 ES 전송 시작: %d건 (tracker 처리 완료)", len(changedBuses))
+	udm.logger.Infof("📤 ES 전송 시작: %d건 (tracker에서 tripNumber 할당 완료)", len(changedBuses))
 
-	// 🔧 tracker에서 tripNumber 업데이트된 Redis 데이터로 ES 전송
-	var esReadyBuses []models.BusLocation
+	// 🔧 changedBuses는 이미 tracker에서 tripNumber가 할당된 상태
+	// Redis와 별도로 동기화할 필요 없이 바로 ES 전송
+	if err := udm.esService.BulkSendBusLocations(udm.indexName, changedBuses); err != nil {
+		udm.logger.Errorf("ES 전송 실패: %v", err)
+		return
+	}
+
+	// Redis에서 해당 버스들의 tripNumber를 tracker 값으로 업데이트
 	for _, bus := range changedBuses {
-		// Redis에서 최신 데이터 조회 (tracker에서 업데이트된 tripNumber 포함)
 		if redisData, err := udm.redisBusManager.GetBusLocationData(bus.PlateNo); err == nil && redisData != nil {
-			esReadyBuses = append(esReadyBuses, redisData.BusLocation)
-			udm.logger.Debugf("📤 ES 전송 데이터 - %s: T%d (tracker 관리)", bus.PlateNo, redisData.BusLocation.TripNumber)
+			if redisData.TripNumber != bus.TripNumber {
+				updatedBus := redisData.BusLocation
+				updatedBus.TripNumber = bus.TripNumber
+
+				if bus.IsAPI2Data() {
+					udm.redisBusManager.UpdateBusLocation(updatedBus, []string{"tracker_sync"})
+				} else {
+					udm.redisBusManager.UpdateBusStatusOnly(updatedBus, []string{"tracker_sync"})
+				}
+
+				udm.logger.Debugf("🔢 Redis tripNumber 동기화 - %s: T%d (tracker→redis)",
+					bus.PlateNo, bus.TripNumber)
+			}
 		}
 	}
 
-	if len(esReadyBuses) > 0 {
-		if err := udm.esService.BulkSendBusLocations(udm.indexName, esReadyBuses); err != nil {
-			udm.logger.Errorf("ES 전송 실패: %v", err)
-			return
-		}
-
-		var syncPlateNos []string
-		for _, bus := range esReadyBuses {
-			syncPlateNos = append(syncPlateNos, bus.PlateNo)
-		}
-		udm.redisBusManager.MarkAsSynced(syncPlateNos)
-
-		udm.logger.Infof("✅ ES 전송 완료: %d건 (tracker에서 tripNumber 관리)", len(esReadyBuses))
+	// ES 동기화 마킹
+	var syncPlateNos []string
+	for _, bus := range changedBuses {
+		syncPlateNos = append(syncPlateNos, bus.PlateNo)
 	}
+	udm.redisBusManager.MarkAsSynced(syncPlateNos)
+
+	udm.logger.Infof("✅ ES 전송 완료: %d건 (tracker 전담 tripNumber 관리)", len(changedBuses))
 }
 
 // CleanupOldData 정리 작업
